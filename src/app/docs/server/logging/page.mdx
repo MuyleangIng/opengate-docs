@@ -1,0 +1,139 @@
+import { Callout } from '@/components/docs/Callout';
+import { CodeBlock } from '@/components/docs/CodeBlock';
+
+export const metadata = { title: 'Logging — OpenGate IAM' };
+
+# Logging
+
+OpenGate IAM uses **Logback** (via Spring Boot) for structured logging. All services emit JSON logs in production for easy ingestion by log aggregation systems.
+
+## Log Levels
+
+Default log levels per environment:
+
+| Logger | Development | Production |
+|--------|-------------|------------|
+| Root | `INFO` | `WARN` |
+| `io.opengate` | `DEBUG` | `INFO` |
+| `org.springframework.security` | `DEBUG` | `WARN` |
+| `org.hibernate.SQL` | `DEBUG` | `OFF` |
+
+Configure log levels in `application.yml`:
+
+<CodeBlock language="yaml" filename="application.yml" code={`logging:
+  level:
+    root: INFO
+    io.opengate: DEBUG
+    org.springframework.security: DEBUG
+    org.hibernate.SQL: DEBUG
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"`} />
+
+## JSON Structured Logging (Production)
+
+Add the Logstash encoder for JSON output:
+
+<CodeBlock language="kotlin" filename="build.gradle.kts" code={`dependencies {
+    implementation("net.logstash.logback:logstash-logback-encoder:7.4")
+}`} />
+
+<CodeBlock language="xml" filename="src/main/resources/logback-spring.xml" code={`<configuration>
+  <springProfile name="prod">
+    <appender name="JSON_CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+      <encoder class="net.logstash.logback.encoder.LogstashEncoder">
+        <includeMdcKeyName>traceId</includeMdcKeyName>
+        <includeMdcKeyName>spanId</includeMdcKeyName>
+        <includeMdcKeyName>userId</includeMdcKeyName>
+        <includeMdcKeyName>realmId</includeMdcKeyName>
+      </encoder>
+    </appender>
+    <root level="INFO">
+      <appender-ref ref="JSON_CONSOLE" />
+    </root>
+  </springProfile>
+</configuration>`} />
+
+## Request Logging
+
+The Gateway ships with a `RequestLoggingFilter` that logs every inbound request:
+
+<CodeBlock language="java" filename="RequestLoggingFilter.java" code={`// Logs: method, path, status, duration, remote IP
+log.info("method={} path={} status={} duration={}ms ip={}",
+    method, path, status, duration, remoteIp);`} />
+
+Enable request logging in `application.yml`:
+
+<CodeBlock language="yaml" code={`logging:
+  level:
+    io.opengate.iam.gateway.filter: DEBUG`} />
+
+## Audit Logging
+
+Security-sensitive events (login, logout, password change, MFA enable) are published to Kafka topic `opengate.audit` and can be consumed by your SIEM:
+
+<CodeBlock language="json" code={`{
+  "eventType": "USER_LOGIN",
+  "userId": "usr_abc123",
+  "realmId": "master",
+  "ip": "203.0.113.1",
+  "userAgent": "Mozilla/5.0 ...",
+  "success": true,
+  "timestamp": "2025-06-01T10:30:00Z"
+}`} />
+
+## Centralized Log Aggregation
+
+### Loki + Grafana (Docker)
+
+<CodeBlock language="yaml" filename="docker-compose.logging.yml" code={`services:
+  loki:
+    image: grafana/loki:2.9.0
+    ports: ["3100:3100"]
+    command: -config.file=/etc/loki/local-config.yaml
+
+  promtail:
+    image: grafana/promtail:2.9.0
+    volumes:
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+    command: -config.file=/etc/promtail/config.yml
+
+  grafana:
+    image: grafana/grafana:10.0.0
+    ports: ["3000:3000"]`} />
+
+### ELK Stack
+
+Ship Docker container logs to Elasticsearch via Filebeat:
+
+<CodeBlock language="yaml" filename="filebeat.yml" code={`filebeat.inputs:
+  - type: container
+    paths:
+      - /var/lib/docker/containers/*/*.log
+    processors:
+      - add_docker_metadata: ~
+
+output.elasticsearch:
+  hosts: ["elasticsearch:9200"]
+  index: "opengate-%{+yyyy.MM.dd}"`} />
+
+<Callout variant="info" title="Trace correlation">
+  Enable OpenTelemetry tracing to automatically inject `traceId` and `spanId` into log MDC. See [Tracing](/docs/observability/tracing).
+</Callout>
+
+## Log Rotation
+
+For file-based logging, configure Logback rolling policy:
+
+<CodeBlock language="xml" code={`<appender name="FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+  <file>logs/opengate.log</file>
+  <rollingPolicy class="ch.qos.logback.core.rolling.TimeBasedRollingPolicy">
+    <fileNamePattern>logs/opengate.%d{yyyy-MM-dd}.gz</fileNamePattern>
+    <maxHistory>30</maxHistory>
+    <totalSizeCap>5GB</totalSizeCap>
+  </rollingPolicy>
+</appender>`} />
+
+<Callout variant="warning" title="Do not log credentials">
+  Never log passwords, tokens, or PII. Spring Security masks sensitive parameters by default but review custom log statements carefully.
+</Callout>

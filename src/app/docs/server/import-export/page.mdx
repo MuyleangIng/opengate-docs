@@ -1,0 +1,140 @@
+import { Callout } from '@/components/docs/Callout';
+import { CodeBlock } from '@/components/docs/CodeBlock';
+
+export const metadata = { title: 'Import / Export — OpenGate IAM' };
+
+# Import / Export
+
+OpenGate IAM supports importing and exporting realm configuration, users, roles, and clients via the Admin API. This enables migrating data between environments, seeding a new realm, or creating configuration backups.
+
+## What Can Be Exported
+
+| Resource | Endpoint | Notes |
+|----------|----------|-------|
+| Realm configuration | `GET /admin/realms/{realmId}/export` | Settings, token lifespans, SMTP config |
+| Users | `GET /admin/realms/{realmId}/users/export` | Hashed credentials are **not** included |
+| Roles | `GET /admin/realms/{realmId}/roles/export` | All roles and role mappings |
+| OAuth Clients | `GET /admin/realms/{realmId}/clients/export` | Client secrets are redacted |
+
+<Callout variant="warning" title="Passwords are not exported">
+  User passwords (BCrypt hashes) are excluded from exports for security. Exported users will need to reset their passwords or you must import hashed credentials via a database-level migration.
+</Callout>
+
+## Exporting a Realm
+
+<CodeBlock language="bash" code={`# Authenticate with the Admin API
+TOKEN=$(curl -s -X POST http://localhost:8080/realms/master/protocol/openid-connect/token \\
+  -d "grant_type=client_credentials" \\
+  -d "client_id=admin-cli" \\
+  -d "client_secret=your-secret" | jq -r .access_token)
+
+# Export full realm configuration
+curl -H "Authorization: Bearer \$TOKEN" \\
+  http://localhost:8089/admin/realms/my-realm/export \\
+  -o my-realm-export.json
+
+# Export users only
+curl -H "Authorization: Bearer \$TOKEN" \\
+  "http://localhost:8089/admin/realms/my-realm/users/export" \\
+  -o my-realm-users.json`} />
+
+## Export Format
+
+<CodeBlock language="json" filename="my-realm-export.json" code={`{
+  "realm": {
+    "id": "my-realm",
+    "displayName": "My Application",
+    "accessTokenLifespan": 300,
+    "refreshTokenLifespan": 2592000,
+    "mfaRequired": false,
+    "smtpConfig": { "host": "smtp.example.com", "port": 587 }
+  },
+  "roles": [
+    { "name": "admin", "description": "Full access" },
+    { "name": "viewer", "description": "Read-only access" }
+  ],
+  "clients": [
+    {
+      "clientId": "my-app",
+      "redirectUris": ["https://app.example.com/callback"],
+      "grantTypes": ["authorization_code", "refresh_token"]
+    }
+  ],
+  "users": [
+    {
+      "username": "alice",
+      "email": "alice@example.com",
+      "enabled": true,
+      "roles": ["viewer"]
+    }
+  ]
+}`} />
+
+## Importing a Realm
+
+<CodeBlock language="bash" code={`# Create a new realm from an export file
+curl -X POST \\
+  -H "Authorization: Bearer \$TOKEN" \\
+  -H "Content-Type: application/json" \\
+  -d @my-realm-export.json \\
+  http://localhost:8089/admin/realms/import
+
+# Import users into an existing realm
+curl -X POST \\
+  -H "Authorization: Bearer \$TOKEN" \\
+  -H "Content-Type: application/json" \\
+  -d @my-realm-users.json \\
+  http://localhost:8089/admin/realms/my-realm/users/import`} />
+
+## Import Behaviour
+
+| Scenario | Default Behaviour |
+|----------|-------------------|
+| Realm already exists | Returns `409 Conflict` — use `?overwrite=true` to replace |
+| User already exists | Skipped — use `?mergeUsers=true` to update attributes |
+| Client already exists | Returns `409 Conflict` |
+| Unknown role in user mapping | Role is created automatically |
+
+<CodeBlock language="bash" code={`# Overwrite existing realm (destructive)
+curl -X POST \\
+  -H "Authorization: Bearer \$TOKEN" \\
+  -H "Content-Type: application/json" \\
+  -d @my-realm-export.json \\
+  "http://localhost:8089/admin/realms/import?overwrite=true"`} />
+
+<Callout variant="danger" title="Overwrite is destructive">
+  `?overwrite=true` deletes and recreates the realm, including all users and sessions. Use with caution in production.
+</Callout>
+
+## Database-Level Migration
+
+For migrating large user bases with password hashes, use PostgreSQL `pg_dump`:
+
+<CodeBlock language="bash" code={`# Dump users from source environment
+pg_dump -h source-host -U opengate -t users opengate_users > users.sql
+
+# Restore to target environment
+psql -h target-host -U opengate opengate_users < users.sql`} />
+
+## Seeding a Realm (CI/CD)
+
+Place a realm seed file in your repository and apply it during deployment:
+
+<CodeBlock language="bash" filename="scripts/seed-realm.sh" code={`#!/bin/bash
+set -e
+
+TOKEN=$(curl -sf -X POST \$OPENGATE_URL/realms/master/protocol/openid-connect/token \\
+  -d "grant_type=client_credentials&client_id=admin-cli&client_secret=\$ADMIN_SECRET" \\
+  | jq -r .access_token)
+
+curl -sf -X POST \\
+  -H "Authorization: Bearer \$TOKEN" \\
+  -H "Content-Type: application/json" \\
+  -d @config/realm-seed.json \\
+  "\$OPENGATE_URL/admin/realms/import?overwrite=false"
+
+echo "Realm seeded successfully"`} />
+
+<Callout variant="info" title="Idempotency">
+  Run the seed script with `overwrite=false` (the default) to make it idempotent — it will skip the import if the realm already exists.
+</Callout>

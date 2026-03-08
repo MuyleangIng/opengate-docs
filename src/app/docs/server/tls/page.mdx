@@ -1,0 +1,112 @@
+import { Callout } from '@/components/docs/Callout';
+import { CodeBlock } from '@/components/docs/CodeBlock';
+
+export const metadata = { title: 'Configuring TLS — OpenGate IAM' };
+
+# Configuring TLS
+
+OpenGate IAM should always be served over HTTPS in production. TLS can be terminated at the API Gateway, at a reverse proxy (Nginx / Traefik), or at a cloud load balancer.
+
+## Option 1 — Terminate TLS at the Gateway (Spring Boot)
+
+Enable TLS directly in `opengate-gateway`:
+
+<CodeBlock language="yaml" filename="application.yml (gateway)" code={`server:
+  port: 8443
+  ssl:
+    enabled: true
+    key-store: classpath:keystore.p12
+    key-store-password: \${SSL_KEYSTORE_PASSWORD}
+    key-store-type: PKCS12
+    key-alias: opengate`} />
+
+Generate a self-signed certificate for development:
+
+<CodeBlock language="bash" code={`keytool -genkeypair \\
+  -alias opengate \\
+  -keyalg RSA \\
+  -keysize 2048 \\
+  -storetype PKCS12 \\
+  -keystore src/main/resources/keystore.p12 \\
+  -validity 3650`} />
+
+<Callout variant="warning" title="Self-signed certificates">
+  Self-signed certificates are suitable for development only. Use a CA-signed certificate or Let's Encrypt in production.
+</Callout>
+
+## Option 2 — Let's Encrypt with Certbot
+
+Install Certbot and obtain a certificate:
+
+<CodeBlock language="bash" code={`# Install Certbot (Ubuntu/Debian)
+apt install certbot
+
+# Obtain certificate (standalone mode — stop your web server first)
+certbot certonly --standalone -d auth.example.com
+
+# Certificates are written to:
+# /etc/letsencrypt/live/auth.example.com/fullchain.pem
+# /etc/letsencrypt/live/auth.example.com/privkey.pem`} />
+
+Convert to PKCS12 for Spring Boot:
+
+<CodeBlock language="bash" code={`openssl pkcs12 -export \\
+  -in /etc/letsencrypt/live/auth.example.com/fullchain.pem \\
+  -inkey /etc/letsencrypt/live/auth.example.com/privkey.pem \\
+  -out keystore.p12 \\
+  -name opengate \\
+  -passout pass:your-keystore-password`} />
+
+## Option 3 — Terminate TLS at Nginx (Recommended)
+
+Delegate TLS to Nginx and keep all Spring Boot services on plain HTTP internally.
+
+<CodeBlock language="nginx" filename="/etc/nginx/sites-available/opengate" code={`server {
+    listen 80;
+    server_name auth.example.com;
+    return 301 https://\$host\$request_uri;
+}
+
+server {
+    listen 443 ssl http2;
+    server_name auth.example.com;
+
+    ssl_certificate     /etc/letsencrypt/live/auth.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/auth.example.com/privkey.pem;
+    ssl_protocols       TLSv1.2 TLSv1.3;
+    ssl_ciphers         HIGH:!aNULL:!MD5;
+
+    location / {
+        proxy_pass         http://localhost:8080;
+        proxy_set_header   Host \$host;
+        proxy_set_header   X-Real-IP \$remote_addr;
+        proxy_set_header   X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header   X-Forwarded-Proto \$scheme;
+    }
+}`} />
+
+## Forwarded Headers
+
+When terminating TLS at a proxy, configure Spring Boot to trust forwarded headers so redirect URIs and issuer URLs are constructed with `https://`:
+
+<CodeBlock language="yaml" filename="application.yml" code={`server:
+  forward-headers-strategy: framework`} />
+
+<Callout variant="info" title="Issuer URI">
+  The OAuth2 issuer URI must match the public HTTPS URL. Set `JWT_ISSUER_URI=https://auth.example.com/realms/master` in all services.
+</Callout>
+
+## Mutual TLS (mTLS) for Service-to-Service
+
+For zero-trust internal communication, enable mTLS between microservices:
+
+<CodeBlock language="yaml" filename="application.yml" code={`server:
+  ssl:
+    enabled: true
+    client-auth: need
+    trust-store: classpath:truststore.p12
+    trust-store-password: \${SSL_TRUSTSTORE_PASSWORD}`} />
+
+<Callout variant="warning" title="Certificate rotation">
+  Automate certificate renewal with `certbot renew` via a cron job or systemd timer, and reload Nginx afterwards: `systemctl reload nginx`.
+</Callout>

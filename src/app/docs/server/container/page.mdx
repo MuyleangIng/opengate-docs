@@ -1,0 +1,104 @@
+import { Callout } from '@/components/docs/Callout';
+import { CodeBlock } from '@/components/docs/CodeBlock';
+
+export const metadata = { title: 'Running in Container — OpenGate IAM' };
+
+# Running in Container
+
+OpenGate IAM is fully containerised. Every microservice ships as a Docker image and the entire stack is orchestrated with Docker Compose.
+
+## Prerequisites
+
+- Docker 24+ and Docker Compose v2
+- At least 8 GB RAM allocated to Docker
+
+## Quick Start
+
+Clone the repository and start all services:
+
+<CodeBlock language="bash" code={`git clone https://github.com/MuyleangIng/opengate-iam.git
+cd opengate-iam
+docker compose -f docker/docker-compose.services.yml up -d`} />
+
+This pulls / builds all images and starts:
+
+| Service | Port |
+|---------|------|
+| API Gateway | 8080 |
+| Auth Service | 8081 |
+| User Service | 8082 |
+| Realm Service | 8083 |
+| RBAC Service | 8084 |
+| Client Service | 8085 |
+| MFA Service | 8086 |
+| Session Service | 8087 |
+| Notification Service | 8088 |
+| Admin API | 8089 |
+| Admin Console (Next.js) | 3000 |
+| PostgreSQL | 5432 |
+| Redis | 6379 |
+| Kafka | 9092 |
+
+## Building Images Locally
+
+<CodeBlock language="bash" code={`# Build all service images
+docker compose -f docker/docker-compose.services.yml build
+
+# Build a single service
+docker compose -f docker/docker-compose.services.yml build opengate-auth-service`} />
+
+## Environment Variables
+
+Override defaults by creating a `.env` file at the project root:
+
+<CodeBlock language="bash" filename=".env" code={`POSTGRES_PASSWORD=supersecret
+REDIS_PASSWORD=redissecret
+JWT_ISSUER_URI=https://auth.example.com/realms/master`} />
+
+Docker Compose automatically loads `.env` from the working directory.
+
+## Health Checks
+
+Each container exposes a Spring Boot Actuator health endpoint:
+
+<CodeBlock language="bash" code={`# Check gateway health
+curl http://localhost:8080/actuator/health
+
+# Check all running containers
+docker compose -f docker/docker-compose.services.yml ps`} />
+
+## Stopping and Cleaning Up
+
+<CodeBlock language="bash" code={`# Stop all containers (keep volumes)
+docker compose -f docker/docker-compose.services.yml down
+
+# Stop and remove volumes (destructive — loses all data)
+docker compose -f docker/docker-compose.services.yml down -v`} />
+
+<Callout variant="danger" title="Volume removal is irreversible">
+  Running `down -v` deletes all PostgreSQL and Redis data. Never run this against a production stack.
+</Callout>
+
+## Running a Single Service
+
+<CodeBlock language="bash" code={`docker compose -f docker/docker-compose.services.yml up -d opengate-user-service`} />
+
+Dependent infrastructure (Postgres, Redis, Kafka) will also start automatically due to `depends_on` configuration.
+
+## Container Resource Limits
+
+For production, add resource constraints to `docker-compose.services.yml`:
+
+<CodeBlock language="yaml" code={`services:
+  opengate-auth-service:
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+        reservations:
+          memory: 256M`} />
+
+<Callout variant="info" title="Kubernetes">
+  For production workloads consider deploying to Kubernetes. See the [Kubernetes deployment guide](/docs/deployment/kubernetes).
+</Callout>

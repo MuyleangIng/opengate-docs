@@ -1,0 +1,124 @@
+import { Callout } from '@/components/docs/Callout';
+import { CodeBlock } from '@/components/docs/CodeBlock';
+
+export const metadata = { title: 'Caching (Redis) — OpenGate IAM' };
+
+# Caching (Redis)
+
+OpenGate IAM uses **Redis 7** for session storage, token blacklisting, rate limiting, and distributed caching.
+
+## What Is Cached
+
+| Data | TTL | Service |
+|------|-----|---------|
+| User sessions | Configurable (default 30 days) | Session Service |
+| Refresh tokens | 30 days | Auth Service |
+| Revoked / blacklisted tokens | Until expiry | Auth Service |
+| OTP codes (email / SMS) | 10 minutes | MFA Service |
+| Rate limit counters | 1 minute | Gateway |
+
+## Connection Configuration
+
+<CodeBlock language="yaml" filename="application.yml" code={`spring:
+  data:
+    redis:
+      host: \${REDIS_HOST:localhost}
+      port: \${REDIS_PORT:6379}
+      password: \${REDIS_PASSWORD:}
+      timeout: 2000ms
+      lettuce:
+        pool:
+          max-active: 8
+          max-idle: 8
+          min-idle: 2
+          max-wait: -1ms`} />
+
+## Session Storage
+
+Sessions are stored as Redis hashes with a structured key:
+
+<CodeBlock language="text" code={`session:{realmId}:{sessionId}  →  Hash { userId, roles, createdAt, expiresAt, ... }`} />
+
+TTL is set on creation and refreshed on each token renewal.
+
+## Token Blacklist
+
+When a user logs out or a token is revoked, the JTI (JWT ID) is stored in Redis until the token's natural expiry:
+
+<CodeBlock language="text" code={`blacklist:jti:{jwtId}  →  "1"  (expires at token exp)`} />
+
+The Gateway checks this key on every request before forwarding to downstream services.
+
+## Redis AUTH (Password)
+
+Enable Redis authentication in `redis.conf`:
+
+<CodeBlock language="conf" filename="redis.conf" code={`requirepass your-strong-redis-password`} />
+
+Set the password in all service environment variables:
+
+<CodeBlock language="bash" code={`REDIS_PASSWORD=your-strong-redis-password`} />
+
+<Callout variant="danger" title="Enable Redis AUTH in production">
+  An unprotected Redis instance exposes all sessions and tokens. Always set a strong password.
+</Callout>
+
+## Redis Sentinel (High Availability)
+
+For production HA, configure Redis Sentinel:
+
+<CodeBlock language="yaml" filename="application.yml" code={`spring:
+  data:
+    redis:
+      sentinel:
+        master: mymaster
+        nodes:
+          - sentinel1:26379
+          - sentinel2:26379
+          - sentinel3:26379
+      password: \${REDIS_PASSWORD}`} />
+
+## Redis Cluster
+
+For horizontal scaling:
+
+<CodeBlock language="yaml" code={`spring:
+  data:
+    redis:
+      cluster:
+        nodes:
+          - redis-node-1:6379
+          - redis-node-2:6379
+          - redis-node-3:6379
+        max-redirects: 3`} />
+
+## Flushing Cache (Development)
+
+<CodeBlock language="bash" code={`# Connect to Redis CLI
+redis-cli -h localhost -p 6379 -a your-password
+
+# Flush all keys (CAUTION: logs out all users)
+FLUSHALL
+
+# Delete a specific session
+DEL session:master:abc123
+
+# List blacklisted tokens
+KEYS blacklist:jti:*`} />
+
+<Callout variant="danger" title="Never run FLUSHALL in production">
+  This will invalidate all active sessions and force every user to log in again.
+</Callout>
+
+## Monitoring
+
+Use `redis-cli monitor` or expose Redis metrics via Redis Exporter for Prometheus:
+
+<CodeBlock language="bash" code={`# Key memory stats
+INFO memory
+
+# Connected clients
+INFO clients
+
+# Hit/miss ratio
+INFO stats | grep keyspace`} />

@@ -1,0 +1,131 @@
+import { Callout } from '@/components/docs/Callout';
+import { CodeBlock } from '@/components/docs/CodeBlock';
+
+export const metadata = { title: 'Reverse Proxy — OpenGate IAM' };
+
+# Reverse Proxy
+
+Place a reverse proxy in front of the OpenGate API Gateway to handle TLS termination, rate limiting, compression, and static asset caching.
+
+## Nginx
+
+### Basic Proxy Configuration
+
+<CodeBlock language="nginx" filename="/etc/nginx/sites-available/opengate" code={`upstream opengate_gateway {
+    server 127.0.0.1:8080;
+    keepalive 32;
+}
+
+server {
+    listen 80;
+    server_name auth.example.com;
+    return 301 https://\$host\$request_uri;
+}
+
+server {
+    listen 443 ssl http2;
+    server_name auth.example.com;
+
+    ssl_certificate     /etc/letsencrypt/live/auth.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/auth.example.com/privkey.pem;
+    ssl_protocols       TLSv1.2 TLSv1.3;
+    ssl_session_cache   shared:SSL:10m;
+    ssl_session_timeout 1d;
+
+    # Security headers
+    add_header Strict-Transport-Security "max-age=63072000; includeSubDomains" always;
+    add_header X-Frame-Options DENY always;
+    add_header X-Content-Type-Options nosniff always;
+    add_header Referrer-Policy no-referrer-when-downgrade always;
+
+    # Gzip
+    gzip on;
+    gzip_types application/json application/javascript text/css;
+
+    location / {
+        proxy_pass         http://opengate_gateway;
+        proxy_http_version 1.1;
+        proxy_set_header   Connection "";
+        proxy_set_header   Host \$host;
+        proxy_set_header   X-Real-IP \$remote_addr;
+        proxy_set_header   X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header   X-Forwarded-Proto https;
+        proxy_read_timeout 60s;
+    }
+}`} />
+
+Enable the site and reload:
+
+<CodeBlock language="bash" code={`ln -s /etc/nginx/sites-available/opengate /etc/nginx/sites-enabled/
+nginx -t && systemctl reload nginx`} />
+
+### Rate Limiting with Nginx
+
+<CodeBlock language="nginx" code={`# Define a zone in the http block
+http {
+    limit_req_zone \$binary_remote_addr zone=opengate:10m rate=30r/m;
+}
+
+# Apply in the server block
+server {
+    location /realms/ {
+        limit_req zone=opengate burst=10 nodelay;
+        proxy_pass http://opengate_gateway;
+    }
+}`} />
+
+## Traefik (Docker)
+
+Traefik integrates natively with Docker Compose and auto-provisions Let's Encrypt certificates.
+
+<CodeBlock language="yaml" filename="docker-compose.traefik.yml" code={`version: '3.9'
+services:
+  traefik:
+    image: traefik:v3.0
+    command:
+      - --providers.docker=true
+      - --entrypoints.web.address=:80
+      - --entrypoints.websecure.address=:443
+      - --certificatesresolvers.le.acme.email=you@example.com
+      - --certificatesresolvers.le.acme.storage=/letsencrypt/acme.json
+      - --certificatesresolvers.le.acme.tlschallenge=true
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - letsencrypt:/letsencrypt
+
+  opengate-gateway:
+    image: opengate/gateway:latest
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.opengate.rule=Host(\`auth.example.com\`)
+      - traefik.http.routers.opengate.entrypoints=websecure
+      - traefik.http.routers.opengate.tls.certresolver=le
+      - traefik.http.services.opengate.loadbalancer.server.port=8080
+
+volumes:
+  letsencrypt:`} />
+
+## Spring Boot Forwarded Headers
+
+When proxying, ensure Spring Boot reconstructs correct redirect URIs:
+
+<CodeBlock language="yaml" filename="application.yml (all services)" code={`server:
+  forward-headers-strategy: framework`} />
+
+<Callout variant="warning" title="Trust only your proxy">
+  Never expose microservices directly to the internet. Only the API Gateway (port 8080) should be accessible through the reverse proxy.
+</Callout>
+
+## WebSocket Support
+
+The Admin Console uses WebSockets for hot reload in development. Enable WebSocket proxying in Nginx:
+
+<CodeBlock language="nginx" code={`location /ws/ {
+    proxy_pass          http://opengate_gateway;
+    proxy_http_version  1.1;
+    proxy_set_header    Upgrade \$http_upgrade;
+    proxy_set_header    Connection "upgrade";
+}`} />

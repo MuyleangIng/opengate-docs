@@ -1,0 +1,112 @@
+import { Callout } from '@/components/docs/Callout';
+import { CodeBlock } from '@/components/docs/CodeBlock';
+
+export const metadata = { title: 'Database — OpenGate IAM' };
+
+# Database
+
+OpenGate IAM uses **PostgreSQL 15** as its primary datastore. Each microservice owns a dedicated database schema, providing full data isolation.
+
+## Schema Layout
+
+| Service | Database |
+|---------|----------|
+| Realm Service | `opengate_realms` |
+| User Service | `opengate_users` |
+| RBAC Service | `opengate_rbac` |
+| Client Service | `opengate_clients` |
+| Notification Service | `opengate_notifications` |
+
+The `opengate-auth-service` and `opengate-session-service` use Redis, not PostgreSQL.
+
+## Connection Configuration
+
+Each service reads its connection details from environment variables:
+
+<CodeBlock language="yaml" filename="application.yml" code={`spring:
+  datasource:
+    url: jdbc:postgresql://\${POSTGRES_HOST:localhost}:\${POSTGRES_PORT:5432}/\${POSTGRES_DB:opengate_users}
+    username: \${POSTGRES_USER:opengate}
+    password: \${POSTGRES_PASSWORD:opengate}
+    hikari:
+      maximum-pool-size: 10
+      minimum-idle: 2
+      connection-timeout: 30000
+      idle-timeout: 600000
+      max-lifetime: 1800000
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    show-sql: false`} />
+
+## Schema Migrations (Flyway)
+
+Schemas are managed by **Flyway**. Migrations run automatically on service startup.
+
+<CodeBlock language="text" code={`src/main/resources/db/migration/
+└── V1__create_users.sql
+└── V2__add_user_status.sql`} />
+
+To run migrations manually:
+
+<CodeBlock language="bash" code={`./gradlew :opengate-user-service:flywayMigrate`} />
+
+<Callout variant="warning" title="Never use ddl-auto: create or update in production">
+  All services are configured with `validate`. Schema changes must go through Flyway migration files.
+</Callout>
+
+## Initialising Databases with Docker
+
+The `docker/init-databases.sh` script creates all required databases on first startup:
+
+<CodeBlock language="bash" filename="docker/init-databases.sh" code={`#!/bin/bash
+set -e
+psql -v ON_ERROR_STOP=1 --username "\$POSTGRES_USER" <<-EOSQL
+  CREATE DATABASE opengate_realms;
+  CREATE DATABASE opengate_users;
+  CREATE DATABASE opengate_rbac;
+  CREATE DATABASE opengate_clients;
+  CREATE DATABASE opengate_notifications;
+EOSQL`} />
+
+## Connection Pooling
+
+HikariCP is the default connection pool. Tune pool size based on your workload:
+
+<CodeBlock language="yaml" code={`spring:
+  datasource:
+    hikari:
+      maximum-pool-size: 20      # Increase for high-traffic services
+      minimum-idle: 5
+      connection-timeout: 20000  # Fail fast if pool exhausted`} />
+
+## Read Replicas
+
+For production, route read-heavy queries to a PostgreSQL read replica:
+
+<CodeBlock language="yaml" code={`spring:
+  datasource:
+    url: jdbc:postgresql://primary:5432/opengate_users   # writes
+  datasource-readonly:
+    url: jdbc:postgresql://replica:5432/opengate_users   # reads`} />
+
+## Backups
+
+Automate daily backups with `pg_dump`:
+
+<CodeBlock language="bash" code={`# Add to crontab: runs at 02:00 daily
+0 2 * * * pg_dump -h localhost -U opengate opengate_users | gzip > /backups/users_\$(date +%F).sql.gz`} />
+
+<Callout variant="info" title="Point-in-time recovery">
+  Enable WAL archiving in `postgresql.conf` for point-in-time recovery (PITR) in production environments.
+</Callout>
+
+## Monitoring
+
+Key metrics to track:
+
+| Metric | Query |
+|--------|-------|
+| Active connections | `SELECT count(*) FROM pg_stat_activity;` |
+| Long-running queries | `SELECT pid, now() - query_start AS duration, query FROM pg_stat_activity WHERE state = 'active' ORDER BY duration DESC;` |
+| Table sizes | `SELECT relname, pg_size_pretty(pg_total_relation_size(relid)) FROM pg_stat_user_tables;` |
