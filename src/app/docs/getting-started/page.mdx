@@ -1,5 +1,6 @@
 import { Callout } from '@/components/docs/Callout';
 import { ServiceCard } from '@/components/docs/ServiceCard';
+import ArchitectureDiagram from '@/components/docs/ArchitectureDiagram';
 
 export const metadata = { title: 'Introduction — OpenGate IAM' };
 
@@ -38,58 +39,25 @@ OpenGate provides everything you need to secure your applications:
 
 ## Platform Architecture
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                      INTERNET / CLIENT APPS                     │
-└───────────────────────────┬─────────────────────────────────────┘
-                            │ HTTPS
-                            ▼
-┌─────────────────────────────────────────────────────────────────┐
-│              opengate-gateway  :8080                            │
-│   Spring Cloud Gateway · CORS · Rate Limit · Request Log       │
-└──────┬──────────┬──────────┬──────────┬──────────┬─────────────┘
-       │          │          │          │          │
-       ▼          ▼          ▼          ▼          ▼
-  ┌─────────┐ ┌───────┐ ┌────────┐ ┌───────┐ ┌─────────┐
-  │  auth   │ │ user  │ │ realm  │ │ rbac  │ │ client  │
-  │  :8081  │ │ :8082 │ │ :8083  │ │ :8084 │ │  :8085  │
-  └────┬────┘ └───┬───┘ └───┬────┘ └───┬───┘ └────┬────┘
-       │          │         │          │           │
-       ▼          ▼         ▼          ▼           ▼
-  ┌─────────┐ ┌──────────────────────────────────────┐
-  │  Redis  │ │            PostgreSQL                 │
-  │  :6379  │ │  opengate_{auth,user,realm,rbac,...}  │
-  └─────────┘ └──────────────────────────────────────┘
-       │
-       ▼
-  ┌──────────────────────────────────────────────────┐
-  │                  Apache Kafka                    │
-  │   user.created · auth.login.* · session.*        │
-  └──────────────┬───────────────────────────────────┘
-                 │
-       ┌─────────┴──────────┐
-       ▼                    ▼
-  ┌─────────┐         ┌──────────────┐
-  │   mfa   │         │notification  │
-  │  :8086  │         │    :8088     │
-  └─────────┘         └──────────────┘
-```
+<div className="not-prose my-8">
+  <ArchitectureDiagram />
+</div>
 
 ---
 
 ## Services Overview
 
 <div className="grid grid-cols-1 md:grid-cols-2 gap-4 not-prose my-6">
-  <ServiceCard name="opengate-gateway"      port={8080} description="Spring Cloud Gateway — API router, CORS, rate limiting, request logging" tech={['Spring Cloud Gateway', 'Redis']} />
-  <ServiceCard name="opengate-auth-service" port={8081} description="OAuth2/OIDC Authorization Server with Spring Authorization Server 1.3" tech={['Spring Auth Server', 'JWT', 'Redis']} />
-  <ServiceCard name="opengate-user-service" port={8082} description="User lifecycle management — CRUD, password, email verification" tech={['Spring Data JPA', 'BCrypt', 'Kafka']} />
-  <ServiceCard name="opengate-realm-service" port={8083} description="Multi-tenant realm configuration — themes, token settings, SMTP" tech={['Spring Data JPA', 'Flyway']} />
-  <ServiceCard name="opengate-rbac-service" port={8084} description="Role-based access control — roles, groups, policy evaluation" tech={['Spring Data JPA', 'RBAC']} />
-  <ServiceCard name="opengate-client-service" port={8085} description="OAuth2 client registry — registration, secrets, redirect URIs" tech={['Spring Data JPA', 'SecureRandom']} />
-  <ServiceCard name="opengate-mfa-service" port={8086} description="Multi-factor auth — TOTP, email/SMS OTP, backup codes" tech={['HMAC-SHA1', 'Redis', 'TOTP']} />
-  <ServiceCard name="opengate-session-service" port={8087} description="Session management — Redis-backed, multi-device, revocation" tech={['Spring Redis', 'Kafka']} />
-  <ServiceCard name="opengate-notification-service" port={8088} description="Email notifications via Thymeleaf templates and SMTP" tech={['Thymeleaf', 'JavaMail', 'Kafka']} />
-  <ServiceCard name="opengate-admin-api" port={8089} description="Aggregated admin REST API — proxies all management operations" tech={['WebFlux', 'WebClient']} />
+  <ServiceCard name="opengate-gateway"              port={8080} description="Spring Cloud Gateway — API router, CORS, rate limiting, request logging"    tech={['Spring Cloud Gateway', 'Redis']} />
+  <ServiceCard name="opengate-auth-service"         port={8081} description="OAuth2/OIDC Authorization Server with Spring Authorization Server 1.3"       tech={['Spring Auth Server', 'JWT', 'Redis']} />
+  <ServiceCard name="opengate-user-service"         port={8082} description="User lifecycle management — CRUD, password, email verification"               tech={['Spring Data JPA', 'BCrypt', 'Kafka']} />
+  <ServiceCard name="opengate-realm-service"        port={8083} description="Multi-tenant realm configuration — themes, token settings, SMTP"              tech={['Spring Data JPA', 'Flyway']} />
+  <ServiceCard name="opengate-rbac-service"         port={8084} description="Role-based access control — roles, groups, policy evaluation"                 tech={['Spring Data JPA', 'RBAC']} />
+  <ServiceCard name="opengate-client-service"       port={8085} description="OAuth2 client registry — registration, secrets, redirect URIs"                tech={['Spring Data JPA', 'SecureRandom']} />
+  <ServiceCard name="opengate-mfa-service"          port={8086} description="Multi-factor auth — TOTP, email/SMS OTP, backup codes"                        tech={['HMAC-SHA1', 'Redis', 'TOTP']} />
+  <ServiceCard name="opengate-session-service"      port={8087} description="Session management — Redis-backed, multi-device, revocation"                  tech={['Spring Redis', 'Kafka']} />
+  <ServiceCard name="opengate-notification-service" port={8088} description="Email notifications via Thymeleaf templates and SMTP"                         tech={['Thymeleaf', 'JavaMail', 'Kafka']} />
+  <ServiceCard name="opengate-admin-api"            port={8089} description="Aggregated admin REST API — proxies all management operations"                tech={['WebFlux', 'WebClient']} />
 </div>
 
 ---
