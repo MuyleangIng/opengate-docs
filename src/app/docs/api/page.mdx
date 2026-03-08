@@ -1,0 +1,90 @@
+import { Callout } from '@/components/docs/Callout';
+import { CodeBlock } from '@/components/docs/CodeBlock';
+
+export const metadata = { title: 'API — Authentication' };
+
+# API Reference
+
+All API calls go through the gateway at `http://localhost:8080`.
+
+<Callout variant="info" title="Base URL">
+`http://localhost:8080` for local development. All services are routed through the gateway.
+</Callout>
+
+## Authentication Endpoints
+
+### Get OIDC Discovery Document
+
+```
+GET /realms/{realm}/.well-known/openid-configuration
+```
+
+**Example:**
+<CodeBlock language="bash" code={`curl http://localhost:8080/realms/master/.well-known/openid-configuration`} />
+
+### Obtain Token (Password Grant)
+
+<Callout variant="warning" title="Deprecated">
+The Resource Owner Password Credentials grant is deprecated in OAuth 2.1. Use Authorization Code + PKCE instead.
+</Callout>
+
+### Obtain Token (Client Credentials)
+
+```
+POST /realms/{realm}/protocol/openid-connect/token
+Content-Type: application/x-www-form-urlencoded
+```
+
+| Parameter | Value |
+|-----------|-------|
+| `grant_type` | `client_credentials` |
+| `client_id` | Your client ID |
+| `client_secret` | Your client secret |
+
+**Response:**
+<CodeBlock language="json" code={`{
+  "access_token": "eyJhbGci...",
+  "token_type": "Bearer",
+  "expires_in": 300,
+  "scope": "openid profile email"
+}`} />
+
+### Refresh Token
+
+```
+POST /realms/{realm}/protocol/openid-connect/token
+```
+
+| Parameter | Value |
+|-----------|-------|
+| `grant_type` | `refresh_token` |
+| `refresh_token` | Your refresh token |
+| `client_id` | Your client ID |
+
+## Common Headers
+
+All protected endpoints require:
+
+```
+Authorization: Bearer <access_token>
+Content-Type: application/json
+```
+
+## Error Responses
+
+<CodeBlock language="json" code={`{
+  "timestamp": "2024-01-15T10:00:00Z",
+  "status": 404,
+  "error": "Not Found",
+  "message": "REALM_NOT_FOUND",
+  "path": "/api/realms/unknown"
+}`} />
+
+| Status | Meaning |
+|--------|---------|
+| `400` | Validation error — check request body |
+| `401` | Missing or invalid JWT |
+| `403` | Insufficient permissions |
+| `404` | Resource not found |
+| `409` | Conflict — resource already exists |
+| `500` | Internal server error |

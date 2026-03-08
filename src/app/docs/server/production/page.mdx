@@ -1,0 +1,74 @@
+import { Callout } from '@/components/docs/Callout';
+
+export const metadata = { title: 'Production Configuration — OpenGate IAM' };
+
+# Configuring for Production
+
+<Callout variant="warning" title="Before going to production">
+Complete this checklist before exposing OpenGate to the internet.
+</Callout>
+
+## Security checklist
+
+- [ ] Change all default passwords (PostgreSQL, Redis, admin account)
+- [ ] Enable TLS on the gateway (see [Configuring TLS](/docs/server/tls))
+- [ ] Set a strong `JWT_SECRET` (RS256 key pair, minimum 2048-bit)
+- [ ] Configure `allowedOrigins` to your actual domain (remove `localhost`)
+- [ ] Enable Redis authentication
+- [ ] Use Kubernetes Secrets or Vault for all credentials
+- [ ] Set `SPRING_JPA_SHOW_SQL=false`
+- [ ] Configure Kafka with TLS and SASL authentication
+
+## Recommended production settings
+
+```yaml
+spring:
+  jpa:
+    show-sql: false
+    hibernate:
+      ddl-auto: validate      # never use create-drop in production
+
+server:
+  tomcat:
+    max-connections: 10000
+
+opengate:
+  token:
+    access-token-ttl: 300     # 5 minutes (shorter in production)
+    refresh-token-ttl: 604800 # 7 days
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,metrics  # do NOT expose env, beans, etc.
+```
+
+## Database
+
+Use a managed PostgreSQL instance (AWS RDS, Google Cloud SQL, Azure Database) with:
+- Automatic backups enabled
+- Read replicas for the user and realm services
+- Connection pooling via PgBouncer
+
+## Reverse proxy
+
+Put Nginx or Caddy in front of the gateway:
+
+```nginx
+server {
+    listen 443 ssl;
+    server_name iam.yourdomain.com;
+
+    ssl_certificate     /etc/ssl/certs/iam.crt;
+    ssl_certificate_key /etc/ssl/private/iam.key;
+
+    location / {
+        proxy_pass http://localhost:9080;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+```

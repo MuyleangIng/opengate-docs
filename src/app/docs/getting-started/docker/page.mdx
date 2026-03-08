@@ -1,0 +1,49 @@
+import { Callout } from '@/components/docs/Callout';
+
+export const metadata = { title: 'Docker — OpenGate IAM' };
+
+# Docker
+
+Run OpenGate IAM on Docker in minutes.
+
+<Callout variant="info" title="Prerequisites">
+Docker 24+ and Docker Compose v2 installed on your machine.
+</Callout>
+
+## Quick start with Docker Compose
+
+```bash
+git clone https://github.com/opengate-iam/opengate.git
+cd opengate
+docker compose up -d
+```
+
+This starts:
+- PostgreSQL 16 on port 5433
+- Redis 7 on port 6380
+- Kafka (KRaft) on port 9092
+- All 11 OpenGate microservices
+- Admin Console on http://localhost:3002
+- Docs on http://localhost:3001
+
+## Verify
+
+```bash
+# Check all containers are running
+docker compose ps
+
+# Check auth service health
+curl http://localhost:9081/actuator/health
+
+# Open admin console
+open http://localhost:3002
+```
+
+## Environment variables
+
+| Variable | Default | Description |
+|---|---|---|
+| `POSTGRES_PASSWORD` | `opengate` | PostgreSQL password |
+| `REDIS_PASSWORD` | *(none)* | Redis password |
+| `JWT_ISSUER_URI` | `http://localhost:9080/realms/master` | JWT issuer |
+| `AUTH_SERVICE_URL` | `http://localhost:9081` | Auth service URL |

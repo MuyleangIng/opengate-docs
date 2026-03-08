@@ -1,0 +1,65 @@
+import { Callout } from '@/components/docs/Callout';
+
+export const metadata = { title: 'Configuring OpenGate — OpenGate IAM' };
+
+# Configuring OpenGate
+
+OpenGate is configured through `application.yml` files in each service, environment variables, and the Admin Console.
+
+## Auth Service configuration
+
+```yaml
+# opengate-auth-service/src/main/resources/application.yml
+server:
+  port: 9081
+
+spring:
+  datasource:
+    url: jdbc:postgresql://localhost:5433/opengate_auth
+    username: opengate
+    password: opengate
+
+opengate:
+  issuer-uri: http://localhost:9080/realms/master
+  token:
+    access-token-ttl: 900        # 15 minutes
+    refresh-token-ttl: 86400     # 1 day
+```
+
+## Gateway configuration
+
+```yaml
+# opengate-gateway/src/main/resources/application.yml
+server:
+  port: 9080
+
+spring:
+  cloud:
+    gateway:
+      globalcors:
+        cors-configurations:
+          '[/**]':
+            allowedOrigins:
+              - "http://localhost:3002"
+              - "http://localhost:3003"
+            allowedMethods: [GET, POST, PUT, DELETE, OPTIONS]
+            allowedHeaders: ["*"]
+            allowCredentials: true
+```
+
+## Environment variable overrides
+
+All configuration values can be overridden with environment variables:
+
+```bash
+export AUTH_SERVICE_URL=http://auth:9081
+export USER_SERVICE_URL=http://users:9082
+export REALM_SERVICE_URL=http://realms:9083
+export SPRING_DATASOURCE_URL=jdbc:postgresql://db:5432/opengate_auth
+export SPRING_REDIS_HOST=redis
+export SPRING_REDIS_PORT=6379
+```
+
+<Callout variant="info" title="Tip">
+In production, use Kubernetes Secrets or HashiCorp Vault to manage sensitive configuration values.
+</Callout>

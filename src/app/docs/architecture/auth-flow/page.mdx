@@ -1,0 +1,89 @@
+import { Callout } from '@/components/docs/Callout';
+import { CodeBlock } from '@/components/docs/CodeBlock';
+
+export const metadata = { title: 'Auth Flow — OpenGate IAM' };
+
+# Auth Flow
+
+## Authorization Code + PKCE Flow
+
+This is the recommended flow for all public clients (SPAs, mobile apps).
+
+```
+1. Client generates code_verifier (random 43-128 chars)
+   code_challenge = BASE64URL(SHA256(code_verifier))
+
+2. GET /realms/master/protocol/openid-connect/auth
+      ?client_id=opengate-console
+      &redirect_uri=http://localhost:3000/callback
+      &response_type=code
+      &code_challenge=<challenge>
+      &code_challenge_method=S256
+      &scope=openid profile email
+
+3. User authenticates (form login)
+
+4. Redirect to: http://localhost:3000/callback?code=<auth_code>
+
+5. POST /realms/master/protocol/openid-connect/token
+   Body: grant_type=authorization_code
+         code=<auth_code>
+         redirect_uri=http://localhost:3000/callback
+         code_verifier=<verifier>
+         client_id=opengate-console
+
+6. Response: { access_token, refresh_token, id_token, expires_in }
+```
+
+## Client Credentials Flow
+
+For server-to-server communication (confidential clients):
+
+<CodeBlock language="bash" code={`curl -X POST http://localhost:8080/realms/master/protocol/openid-connect/token \\
+  -H "Content-Type: application/x-www-form-urlencoded" \\
+  -d "grant_type=client_credentials" \\
+  -d "client_id=my-backend-service" \\
+  -d "client_secret=<secret>"`} />
+
+## Token Refresh
+
+<CodeBlock language="bash" code={`curl -X POST http://localhost:8080/realms/master/protocol/openid-connect/token \\
+  -d "grant_type=refresh_token" \\
+  -d "refresh_token=<refresh_token>" \\
+  -d "client_id=opengate-console"`} />
+
+## OIDC Discovery
+
+<CodeBlock language="bash" code={`curl http://localhost:8080/realms/master/.well-known/openid-configuration`} />
+
+Response includes: `issuer`, `authorization_endpoint`, `token_endpoint`, `jwks_uri`, `userinfo_endpoint`, `scopes_supported`, etc.
+
+## JWT Structure
+
+Access tokens are RS256-signed JWTs:
+
+<CodeBlock language="json" code={`{
+  "iss": "http://localhost:8080/realms/master",
+  "sub": "usr_abc123",
+  "aud": ["opengate-console"],
+  "exp": 1705312800,
+  "iat": 1705309200,
+  "realm": "master",
+  "email": "alice@example.com",
+  "roles": ["admin", "user"]
+}`} />
+
+<Callout variant="info" title="Token lifespan">
+Default access token lifespan is 300 seconds (5 minutes), configurable per realm. Refresh tokens live for 30 days by default.
+</Callout>
+
+## MFA Flow
+
+When MFA is required for a realm:
+
+```
+1. User submits password → auth-service validates
+2. Auth server returns mfa_required challenge
+3. Client calls POST /api/mfa/totp/verify or POST /api/mfa/email-otp/verify
+4. On success, auth-server issues full token set
+```

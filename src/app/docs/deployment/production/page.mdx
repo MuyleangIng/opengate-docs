@@ -1,0 +1,56 @@
+import { Callout } from '@/components/docs/Callout';
+
+export const metadata = { title: 'Production Checklist — OpenGate IAM' };
+
+# Production Checklist
+
+Before deploying OpenGate IAM to production, complete this checklist.
+
+## Security
+
+- [ ] **Replace in-memory RSA keys** with Vault-backed key storage
+- [ ] **Change all default passwords** — PostgreSQL, Redis, Vault root token
+- [ ] **Enable Redis AUTH** — set a strong Redis password
+- [ ] **TLS/HTTPS everywhere** — terminate SSL at the load balancer or gateway
+- [ ] **Network isolation** — microservices should not be publicly accessible, only through gateway
+- [ ] **Disable Vault dev mode** — use a production Vault setup with unsealing
+- [ ] **Enable Kafka SSL** — encrypt Kafka traffic between services
+- [ ] **Rate limiting** — configure Redis-based rate limiting on the gateway
+
+## Configuration
+
+- [ ] **Set proper CORS origins** — replace `localhost:3000` with your actual domain
+- [ ] **Configure SMTP** — set real SMTP credentials per realm
+- [ ] **Token lifespans** — adjust access token (default 5min) and refresh token (default 30d) per security requirements
+- [ ] **BCrypt cost factor** — default 12, increase for stronger security at the cost of performance
+- [ ] **MFA enforcement** — enable `mfaRequired: true` on sensitive realms
+
+## Infrastructure
+
+- [ ] **PostgreSQL replicas** — set up read replicas for the user and realm databases
+- [ ] **Redis Sentinel or Cluster** — for session store high availability
+- [ ] **Kafka replication factor** — set `replication.factor=3` for production topics
+- [ ] **Persistent volumes** — ensure all Docker volumes are backed by persistent storage
+- [ ] **Backup strategy** — automated PostgreSQL backups with point-in-time recovery
+
+## Observability
+
+- [ ] **Centralized logging** — ship logs to ELK stack or Loki
+- [ ] **Metrics** — expose `/actuator/metrics` and scrape with Prometheus
+- [ ] **Distributed tracing** — add OpenTelemetry/Jaeger instrumentation
+- [ ] **Alerting** — alert on login failure spikes, service downtime, high latency
+
+## Monitoring Endpoints
+
+Each service exposes Spring Actuator endpoints:
+
+| Endpoint | Description |
+|----------|-------------|
+| `/actuator/health` | Service health + dependencies |
+| `/actuator/metrics` | JVM, HTTP, DB metrics |
+| `/actuator/info` | Build info, version |
+| `/actuator/prometheus` | Prometheus-format metrics |
+
+<Callout variant="danger" title="Never expose actuator publicly">
+Always restrict `/actuator/**` to internal networks. These endpoints expose sensitive runtime information.
+</Callout>

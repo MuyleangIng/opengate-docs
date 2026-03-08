@@ -1,0 +1,112 @@
+import { Callout } from '@/components/docs/Callout';
+import { CodeBlock } from '@/components/docs/CodeBlock';
+
+export const metadata = { title: 'Kubernetes — OpenGate IAM' };
+
+# Kubernetes Deployment
+
+## Prerequisites
+
+- Kubernetes 1.28+
+- Helm 3+
+- A PostgreSQL operator or managed database (RDS, Cloud SQL, etc.)
+- Redis Operator or managed Redis (ElastiCache, Memorystore)
+
+## Namespace
+
+<CodeBlock language="bash" code={`kubectl create namespace opengate`} />
+
+## ConfigMap
+
+<CodeBlock language="yaml" filename="k8s/configmap.yaml" code={`apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: opengate-config
+  namespace: opengate
+data:
+  POSTGRES_HOST: "postgres-service"
+  POSTGRES_PORT: "5432"
+  REDIS_HOST: "redis-service"
+  REDIS_PORT: "6379"
+  KAFKA_BOOTSTRAP_SERVERS: "kafka-service:9092"`} />
+
+## Example Service Deployment
+
+<CodeBlock language="yaml" filename="k8s/user-service.yaml" code={`apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: opengate-user-service
+  namespace: opengate
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: opengate-user-service
+  template:
+    metadata:
+      labels:
+        app: opengate-user-service
+    spec:
+      containers:
+        - name: user-service
+          image: opengate-iam/user-service:latest
+          ports:
+            - containerPort: 8082
+          envFrom:
+            - configMapRef:
+                name: opengate-config
+            - secretRef:
+                name: opengate-secrets
+          readinessProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: 8082
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: 8082
+            initialDelaySeconds: 60
+            periodSeconds: 30
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: opengate-user-service
+  namespace: opengate
+spec:
+  selector:
+    app: opengate-user-service
+  ports:
+    - port: 8082
+      targetPort: 8082`} />
+
+## Ingress (Gateway)
+
+<CodeBlock language="yaml" filename="k8s/ingress.yaml" code={`apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: opengate-ingress
+  namespace: opengate
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+spec:
+  tls:
+    - hosts: ["iam.yourdomain.com"]
+      secretName: opengate-tls
+  rules:
+    - host: iam.yourdomain.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: opengate-gateway
+                port:
+                  number: 8080`} />
+
+<Callout variant="info" title="Horizontal scaling">
+The gateway, user-service, realm-service, rbac-service, and client-service are fully stateless and can be horizontally scaled. The auth-service requires shared Redis for token state.
+</Callout>

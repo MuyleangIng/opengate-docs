@@ -1,0 +1,31 @@
+import { ServiceCard } from '@/components/docs/ServiceCard';
+
+export const metadata = { title: 'Microservices — OpenGate IAM' };
+
+# Microservices
+
+OpenGate IAM is composed of 10 microservices + 1 shared library.
+
+## opengate-common
+
+Shared library included by all services. Not a runnable service.
+
+- `PageResponse<T>` — generic paginated response record
+- `OpenGateException` / `ResourceNotFoundException` — typed exceptions
+- `GlobalExceptionHandler` — `@RestControllerAdvice` for 404/400
+- `DomainEvent` — Kafka event envelope with `eventId`, `eventType`, `aggregateId`, `realm`, `payload`, `occurredAt`
+
+## Service Details
+
+<div className="grid grid-cols-1 gap-4 not-prose my-6">
+  <ServiceCard name="opengate-gateway" port={8080} description="Spring Cloud Gateway routes all external requests. Handles CORS, request logging (method, path, status, duration), and will handle rate limiting. Routes: /api/auth/**, /api/users/**, /api/realms/**, /api/rbac/**, /api/clients/**, /api/mfa/**, /api/sessions/**, /admin/**" tech={['Spring Cloud Gateway', 'Redis Reactive', 'GlobalFilter']} />
+  <ServiceCard name="opengate-auth-service" port={8081} description="OAuth2 Authorization Server (Spring Authorization Server 1.3). Issues access tokens (JWT, RSA-2048), handles OIDC discovery, manages registered clients with PKCE support. Publishes auth.login.success/failure events." tech={['Spring Auth Server 1.3', 'JJWT', 'Redis', 'Kafka', 'PostgreSQL']} />
+  <ServiceCard name="opengate-user-service" port={8082} description="Full user lifecycle: create, update, delete, list (paginated), password reset, email verification trigger. Passwords hashed with BCrypt cost=12. UserCredential stored separately from User entity." tech={['Spring Data JPA', 'BCrypt(12)', 'Kafka', 'PostgreSQL']} />
+  <ServiceCard name="opengate-realm-service" port={8083} description="Realm CRUD with validation. Realms have: name (slug, immutable), displayName, loginTheme, token lifespans, MFA requirement, SMTP settings (JSONB), password policy (JSONB). Seeds master realm on startup." tech={['Spring Data JPA', 'Flyway', 'PostgreSQL']} />
+  <ServiceCard name="opengate-rbac-service" port={8084} description="Role management, user-role mapping, policy evaluation. Evaluate endpoint returns PERMIT if user has any role, DENY otherwise. Supports composite roles and groups with hierarchy." tech={['Spring Data JPA', 'PostgreSQL']} />
+  <ServiceCard name="opengate-client-service" port={8085} description="OAuth2 client registry. Generates client IDs as client-{uuid8}. Client secrets hashed with BCrypt. Supports public/confidential clients, PKCE, multiple redirect URIs and grant types." tech={['Spring Data JPA', 'BCrypt', 'SecureRandom', 'PostgreSQL']} />
+  <ServiceCard name="opengate-mfa-service" port={8086} description="TOTP: custom HMAC-SHA1 RFC 6238 implementation, ±1 window tolerance, QR URI generation, backup codes (10 × 8-char). OTP: Redis-backed email/SMS codes with 10-minute TTL." tech={['HMAC-SHA1', 'TOTP RFC 6238', 'Redis', 'StringRedisTemplate']} />
+  <ServiceCard name="opengate-session-service" port={8087} description="Redis-backed sessions with 8-hour TTL. Tracks per-user session set. Fields: sessionId, userId, realmId, clientIds, ipAddress, userAgent, timestamps. Publishes session.terminated on revocation." tech={['Spring Redis', 'Kafka', 'Serializable']} />
+  <ServiceCard name="opengate-notification-service" port={8088} description="Kafka consumer for user.created and auth.login.failure events. Renders Thymeleaf HTML email templates (welcome, verify-email, reset-password, mfa-otp, login-alert) and sends via SMTP. Tracks SENT/FAILED in PostgreSQL." tech={['Thymeleaf', 'JavaMailSender', 'Kafka Consumer', 'PostgreSQL']} />
+  <ServiceCard name="opengate-admin-api" port={8089} description="Aggregated admin REST API. Proxies to realm, user, rbac, client, session services via reactive WebClient. Provides /admin/stats endpoint with aggregated counts." tech={['Spring WebFlux', 'WebClient', 'Reactive']} />
+</div>

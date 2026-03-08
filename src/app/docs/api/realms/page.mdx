@@ -1,0 +1,62 @@
+import { CodeBlock } from '@/components/docs/CodeBlock';
+
+export const metadata = { title: 'Realms API — OpenGate IAM' };
+
+# Realms API
+
+Base path: `/api/realms`
+
+## List Realms
+
+```
+GET /api/realms
+```
+
+**Response:** `200 OK`
+<CodeBlock language="json" code={`[
+  {
+    "id": "550e8400-e29b-41d4-a716-446655440000",
+    "name": "master",
+    "displayName": "Master Realm",
+    "enabled": true,
+    "mfaRequired": false,
+    "tokenLifespanSeconds": 300,
+    "refreshTokenLifespanSeconds": 2592000,
+    "createdAt": "2024-01-01T00:00:00Z"
+  }
+]`} />
+
+## Get Realm
+
+```
+GET /api/realms/{realm}
+```
+
+## Create Realm
+
+```
+POST /api/realms
+```
+
+<CodeBlock language="json" code={`{
+  "name": "corp",
+  "displayName": "Corp Organization",
+  "mfaRequired": true,
+  "tokenLifespanSeconds": 600
+}`} />
+
+**Validation:**
+- `name` must match `^[a-z0-9-]+$`
+- `name` must be unique
+
+## Update Realm
+
+```
+PUT /api/realms/{realm}
+```
+
+## Delete Realm
+
+```
+DELETE /api/realms/{realm}
+```

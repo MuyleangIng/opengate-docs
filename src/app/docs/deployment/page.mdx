@@ -1,0 +1,85 @@
+import { Callout } from '@/components/docs/Callout';
+import { CodeBlock } from '@/components/docs/CodeBlock';
+
+export const metadata = { title: 'Docker Compose — OpenGate IAM' };
+
+# Docker Compose Deployment
+
+## Infrastructure Stack
+
+<CodeBlock language="bash" filename="docker/docker-compose.infra.yml" code={`services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: opengate
+      POSTGRES_PASSWORD: opengate
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init-databases.sh:/docker-entrypoint-initdb.d/init.sh
+    ports: ["5432:5432"]
+
+  redis:
+    image: redis:7-alpine
+    command: redis-server --appendonly yes
+    ports: ["6379:6379"]
+
+  kafka:
+    image: confluentinc/cp-kafka:7.6.0
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+      CLUSTER_ID: MkU3OEVBNTcwNTJENDM2Qk
+
+  vault:
+    image: hashicorp/vault:1.16
+    environment:
+      VAULT_DEV_ROOT_TOKEN_ID: root
+      VAULT_DEV_LISTEN_ADDRESS: 0.0.0.0:8200
+    cap_add: [IPC_LOCK]
+    ports: ["8200:8200"]`} />
+
+## Starting Services
+
+<CodeBlock language="bash" code={`# 1. Start infrastructure
+docker compose -f docker/docker-compose.infra.yml up -d
+
+# 2. Start IAM services
+docker compose -f docker/docker-compose.services.yml up -d
+
+# 3. View logs
+docker compose -f docker/docker-compose.services.yml logs -f
+
+# 4. Stop everything
+docker compose -f docker/docker-compose.services.yml down
+docker compose -f docker/docker-compose.infra.yml down`} />
+
+## Service Health Checks
+
+<CodeBlock language="bash" code={`# Check all service health endpoints
+for port in 8080 8081 8082 8083 8084 8085 8086 8087 8088 8089; do
+  echo -n "Port $port: "
+  curl -s http://localhost:$port/actuator/health | grep -o '"status":"[^"]*"' || echo "unreachable"
+done`} />
+
+## Database Initialization
+
+The `init-databases.sh` script creates all required databases:
+
+<CodeBlock language="bash" filename="docker/init-databases.sh" code={`#!/bin/bash
+set -e
+psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" <<-EOSQL
+    CREATE DATABASE opengate_auth;
+    CREATE DATABASE opengate_user;
+    CREATE DATABASE opengate_realm;
+    CREATE DATABASE opengate_rbac;
+    CREATE DATABASE opengate_client;
+    CREATE DATABASE opengate_notification;
+EOSQL`} />
+
+<Callout variant="info" title="Flyway auto-migration">
+All Flyway migrations run automatically when each service starts. The `master` realm is seeded by `V1__create_realms.sql`.
+</Callout>

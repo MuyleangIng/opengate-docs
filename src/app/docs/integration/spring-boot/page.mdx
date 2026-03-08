@@ -1,0 +1,176 @@
+import { Callout } from '@/components/docs/Callout';
+
+export const metadata = { title: 'Spring Boot Integration — OpenGate IAM' };
+
+# Spring Boot Integration
+
+Protect a Spring Boot REST API with OpenGate IAM in **3 steps** using `opengate-spring-boot-starter` — the same experience as Keycloak's Spring adapter.
+
+<Callout variant="success" title="Working example">
+The complete sample API runs at **http://localhost:8090**. Source: `opengate-sample-app/`.
+</Callout>
+
+---
+
+## Step 1 — Add the starter
+
+In your `build.gradle.kts`:
+
+```kotlin
+dependencies {
+  implementation(project(":opengate-spring-boot-starter"))
+
+  // or from Maven (when published):
+  // implementation("io.opengate:opengate-spring-boot-starter:1.0.0")
+}
+```
+
+---
+
+## Step 2 — Configure `application.yml`
+
+```yaml
+opengate:
+  server-url: http://localhost:9080     # OpenGate gateway
+  realm: master
+  resource: my-app                       # your client ID
+  public-paths:
+    - /api/public/**
+    - /actuator/health
+
+spring:
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          jwk-set-uri: http://localhost:9081/oauth2/jwks
+          issuer-uri: http://localhost:9080/realms/master
+```
+
+That's it — the starter auto-configures a stateless JWT resource server.
+
+---
+
+## Step 3 — Secure your controllers
+
+```java
+@RestController
+@RequestMapping("/api/products")
+public class ProductController {
+
+    // Any authenticated user
+    @GetMapping
+    @PreAuthorize("isAuthenticated()")
+    public List<Product> list() {
+        return productService.findAll();
+    }
+
+    // Admin only
+    @PostMapping
+    @PreAuthorize("hasRole('ADMIN')")
+    public Product create(@RequestBody Product p) {
+        return productService.save(p);
+    }
+
+    // Admin only
+    @DeleteMapping("/{id}")
+    @PreAuthorize("hasRole('ADMIN')")
+    public void delete(@PathVariable String id) {
+        productService.delete(id);
+    }
+}
+```
+
+---
+
+## Get the current user
+
+Inject `OpenGateUser` anywhere in your controller:
+
+```java
+import io.opengate.starter.user.OpenGateUser;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.security.oauth2.jwt.Jwt;
+
+@GetMapping("/api/me")
+public Map<String, Object> me(@AuthenticationPrincipal Jwt jwt) {
+    OpenGateUser user = OpenGateUser.from(jwt);
+
+    return Map.of(
+        "userId",   user.getUserId(),
+        "username", user.getUsername(),
+        "email",    user.getEmail(),
+        "roles",    user.getRoles(),
+        "realm",    user.getRealm(),
+        "isAdmin",  user.hasRole("admin")
+    );
+}
+```
+
+---
+
+## Test with curl
+
+```bash
+# 1. Get a token (client credentials — server-to-server)
+TOKEN=$(curl -s -X POST http://localhost:9081/oauth2/token \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -H "Authorization: Basic $(echo -n 'sample-app:sample-secret' | base64)" \
+  -d "grant_type=client_credentials&scope=openid profile" \
+  | jq -r '.access_token')
+
+echo "Token: ${TOKEN:0:50}..."
+
+# 2. Public endpoint — no token needed
+curl http://localhost:8090/api/public/status
+
+# 3. Protected endpoint — with token
+curl -H "Authorization: Bearer $TOKEN" \
+     http://localhost:8090/api/products
+
+# 4. Your profile
+curl -H "Authorization: Bearer $TOKEN" \
+     http://localhost:8090/api/me
+
+# 5. Admin endpoint
+curl -H "Authorization: Bearer $TOKEN" \
+     http://localhost:8090/api/admin/dashboard
+
+# 6. No token → 401
+curl http://localhost:8090/api/products
+```
+
+---
+
+## Role extraction
+
+The starter extracts roles from all three locations automatically:
+
+```
+JWT claim          → Spring authority
+─────────────────────────────────────
+roles["admin"]     → ROLE_ADMIN
+realm_access.roles → ROLE_ADMIN
+resource_access    → ROLE_ADMIN
+```
+
+This means `@PreAuthorize("hasRole('ADMIN')")` works regardless of which format OpenGate uses — and it's fully **Keycloak-compatible** out of the box.
+
+---
+
+## How it wires together
+
+```
+opengate-sample-frontend (3003)
+  │  Authorization Code + PKCE
+  ▼
+opengate-auth-service (9081)  ──issues JWT──▶  stored in browser localStorage
+                                                │
+opengate-sample-frontend                        │  Bearer token
+  │  GET /api/products                          │
+  ▼                                             ▼
+opengate-sample-app (8090)  ◀── validates JWT via /oauth2/jwks
+  │  @PreAuthorize("isAuthenticated()")
+  ▼
+200 OK — product list returned
+```

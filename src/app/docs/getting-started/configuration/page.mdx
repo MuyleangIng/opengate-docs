@@ -1,0 +1,85 @@
+import { Callout } from '@/components/docs/Callout';
+import { CodeBlock } from '@/components/docs/CodeBlock';
+
+export const metadata = { title: 'Configuration — OpenGate IAM' };
+
+# Configuration
+
+## Realm Settings
+
+Realms are the top-level tenants in OpenGate. Each realm has isolated users, clients, and roles.
+
+The `master` realm is seeded automatically on first startup. Create additional realms via the Admin Console or REST API.
+
+Key realm settings:
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `tokenLifespanSeconds` | `300` | Access token TTL (5 minutes) |
+| `refreshTokenLifespanSeconds` | `2592000` | Refresh token TTL (30 days) |
+| `mfaRequired` | `false` | Force MFA for all users |
+| `loginTheme` | `default` | UI theme for login page |
+
+## Gateway Configuration
+
+<CodeBlock language="yaml" filename="opengate-gateway/src/main/resources/application.yml" code={`spring:
+  cloud:
+    gateway:
+      globalcors:
+        corsConfigurations:
+          '[/**]':
+            allowedOrigins:
+              - "http://localhost:3000"
+              - "http://localhost:3001"
+            allowedMethods: ["GET","POST","PUT","DELETE","OPTIONS"]
+            allowedHeaders: ["*"]
+            allowCredentials: true
+      routes:
+        - id: auth
+          uri: http://localhost:8081
+          predicates: [Path=/api/auth/**,/realms/**]
+        - id: users
+          uri: http://localhost:8082
+          predicates: [Path=/api/users/**]`} />
+
+## Auth Server (JWT Keys)
+
+By default, a 2048-bit RSA key pair is generated in memory on startup. For production, store keys in HashiCorp Vault:
+
+<CodeBlock language="yaml" code={`vault:
+  uri: http://localhost:8200
+  token: root
+  kv:
+    enabled: true
+    backend: secret
+    default-context: opengate/jwt-keys`} />
+
+<Callout variant="warning" title="In-memory keys">
+In-memory RSA keys are regenerated on every restart, invalidating all existing JWTs. Always use Vault or a keystore in production.
+</Callout>
+
+## Password Policy
+
+Configure per-realm via `passwordPolicy` (JSON):
+
+<CodeBlock language="json" code={`{
+  "minLength": 8,
+  "requireUppercase": true,
+  "requireNumbers": true,
+  "requireSpecial": false,
+  "maxAge": 90
+}`} />
+
+## SMTP Settings
+
+Configure per-realm via `smtpSettings` (JSON):
+
+<CodeBlock language="json" code={`{
+  "host": "smtp.gmail.com",
+  "port": 587,
+  "username": "noreply@yourcompany.com",
+  "password": "app-password",
+  "fromName": "OpenGate IAM",
+  "ssl": false,
+  "starttls": true
+}`} />

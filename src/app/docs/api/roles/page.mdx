@@ -1,0 +1,78 @@
+import { CodeBlock } from '@/components/docs/CodeBlock';
+
+export const metadata = { title: 'Roles & RBAC API — OpenGate IAM' };
+
+# Roles & RBAC API
+
+Base path: `/api/realms/{realm}/roles` and `/api/realms/{realm}/users/{userId}/role-mappings`
+
+## List Roles
+
+```
+GET /api/realms/{realm}/roles
+```
+
+**Response:**
+<CodeBlock language="json" code={`[
+  {
+    "id": "role_abc123",
+    "realmName": "master",
+    "name": "admin",
+    "description": "Full administrative access",
+    "composite": false,
+    "createdAt": "2024-01-01T00:00:00Z"
+  }
+]`} />
+
+## Create Role
+
+```
+POST /api/realms/{realm}/roles
+```
+
+<CodeBlock language="json" code={`{
+  "name": "editor",
+  "description": "Can edit content but not manage users",
+  "composite": false
+}`} />
+
+## Delete Role
+
+```
+DELETE /api/realms/{realm}/roles/{id}
+```
+
+## Assign Role to User
+
+```
+POST /api/realms/{realm}/users/{userId}/role-mappings
+```
+
+<CodeBlock language="json" code={`{ "roleId": "role_abc123" }`} />
+
+## Get User Roles
+
+```
+GET /api/realms/{realm}/users/{userId}/role-mappings
+```
+
+## Evaluate Policy
+
+```
+POST /api/evaluate
+```
+
+<CodeBlock language="json" code={`{
+  "userId": "usr_abc123",
+  "realmName": "master",
+  "resource": "users:write"
+}`} />
+
+**Response:**
+<CodeBlock language="json" code={`{
+  "decision": "PERMIT",
+  "userId": "usr_abc123",
+  "roles": ["admin", "user"]
+}`} />
+
+The evaluation logic: returns `PERMIT` if the user has any roles in the realm, `DENY` otherwise. Fine-grained permission evaluation can be extended via custom policy handlers.

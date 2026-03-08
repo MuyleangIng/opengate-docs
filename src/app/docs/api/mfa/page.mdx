@@ -1,0 +1,104 @@
+import { Callout } from '@/components/docs/Callout';
+import { CodeBlock } from '@/components/docs/CodeBlock';
+
+export const metadata = { title: 'MFA API — OpenGate IAM' };
+
+# MFA API
+
+Base path: `/api/mfa`
+
+## TOTP (Time-Based One-Time Password)
+
+Compatible with Google Authenticator, Authy, and any RFC 6238 TOTP app.
+
+### Setup TOTP
+
+```
+POST /api/mfa/totp/setup
+```
+<CodeBlock language="json" code={`{ "userId": "usr_abc123" }`} />
+
+**Response:**
+<CodeBlock language="json" code={`{
+  "secret": "JBSWY3DPEHPK3PXP",
+  "qrUri": "otpauth://totp/OpenGate:alice@example.com?secret=JBSWY3DPEHPK3PXP&issuer=OpenGate"
+}`} />
+
+Use the `qrUri` to generate a QR code. The user scans it with their authenticator app.
+
+### Verify TOTP
+
+```
+POST /api/mfa/totp/verify
+```
+<CodeBlock language="json" code={`{
+  "userId": "usr_abc123",
+  "code": "123456"
+}`} />
+
+<Callout variant="info" title="Window tolerance">
+The TOTP implementation allows ±1 time window (±30 seconds) to account for clock drift.
+</Callout>
+
+## Email OTP
+
+### Send Email OTP
+
+```
+POST /api/mfa/email-otp/send
+```
+<CodeBlock language="json" code={`{ "userId": "usr_abc123" }`} />
+
+Sends a 6-digit OTP to the user's email. Stored in Redis with 10-minute TTL.
+
+### Verify Email OTP
+
+```
+POST /api/mfa/email-otp/verify
+```
+<CodeBlock language="json" code={`{
+  "userId": "usr_abc123",
+  "code": "847291"
+}`} />
+
+## SMS OTP
+
+### Send SMS OTP
+
+```
+POST /api/mfa/sms-otp/send
+```
+<CodeBlock language="json" code={`{ "userId": "usr_abc123" }`} />
+
+### Verify SMS OTP
+
+```
+POST /api/mfa/sms-otp/verify
+```
+<CodeBlock language="json" code={`{
+  "userId": "usr_abc123",
+  "code": "592847"
+}`} />
+
+## Backup Codes
+
+### Generate Backup Codes
+
+```
+POST /api/mfa/backup-codes/generate
+```
+<CodeBlock language="json" code={`{ "userId": "usr_abc123" }`} />
+
+**Response:**
+<CodeBlock language="json" code={`{
+  "codes": [
+    "ABC12345", "DEF67890", "GHI11223",
+    "JKL44556", "MNO77889", "PQR00112",
+    "STU33445", "VWX66778", "YZA99001",
+    "BCD22334"
+  ]
+}`} />
+
+<Callout variant="warning" title="One-time use">
+Each backup code can only be used once. Store them securely. Generating new codes invalidates all previous ones.
+</Callout>

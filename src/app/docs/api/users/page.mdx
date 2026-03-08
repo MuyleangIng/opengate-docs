@@ -1,0 +1,95 @@
+import { Callout } from '@/components/docs/Callout';
+import { CodeBlock } from '@/components/docs/CodeBlock';
+
+export const metadata = { title: 'Users API — OpenGate IAM' };
+
+# Users API
+
+Base path: `/api/users`
+
+## List Users (Paginated)
+
+```
+GET /api/users?realm=master&search=alice&page=0&size=20
+```
+
+| Param | Type | Description |
+|-------|------|-------------|
+| `realm` | string | **Required.** Realm name |
+| `search` | string | Optional. Searches username, email, firstName |
+| `page` | int | Page index (0-based, default 0) |
+| `size` | int | Page size (default 20) |
+
+**Response:**
+<CodeBlock language="json" code={`{
+  "content": [
+    {
+      "id": "usr_abc123",
+      "realmName": "master",
+      "username": "alice",
+      "email": "alice@example.com",
+      "firstName": "Alice",
+      "lastName": "Smith",
+      "enabled": true,
+      "emailVerified": false,
+      "createdAt": "2024-01-15T10:00:00Z"
+    }
+  ],
+  "page": 0,
+  "size": 20,
+  "totalElements": 1284,
+  "totalPages": 65
+}`} />
+
+## Get User
+
+```
+GET /api/users/{id}
+```
+
+## Create User
+
+```
+POST /api/users
+```
+
+<CodeBlock language="json" code={`{
+  "realmName": "master",
+  "username": "alice",
+  "email": "alice@example.com",
+  "firstName": "Alice",
+  "lastName": "Smith",
+  "password": "SecurePassword123!"
+}`} />
+
+<Callout variant="info" title="Password hashing">
+Passwords are hashed with BCrypt cost factor 12. Plain text is never stored.
+</Callout>
+
+## Update User
+
+```
+PUT /api/users/{id}
+```
+
+## Delete User
+
+```
+DELETE /api/users/{id}
+```
+
+## Reset Password
+
+```
+POST /api/users/{id}/reset-password
+```
+
+<CodeBlock language="json" code={`{ "newPassword": "NewSecurePassword456!" }`} />
+
+## Trigger Email Verification
+
+```
+POST /api/users/{id}/send-verify-email
+```
+
+Publishes a `user.verify.email` event. The notification service will send a verification email using the Thymeleaf `verify-email.html` template.

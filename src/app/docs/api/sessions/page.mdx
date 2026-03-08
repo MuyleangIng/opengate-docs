@@ -1,0 +1,62 @@
+import { CodeBlock } from '@/components/docs/CodeBlock';
+
+export const metadata = { title: 'Sessions API — OpenGate IAM' };
+
+# Sessions API
+
+Base path: `/api/sessions` and `/api/users/{userId}/sessions`
+
+## Create Session
+
+```
+POST /api/sessions
+```
+<CodeBlock language="json" code={`{
+  "userId": "usr_abc123",
+  "realmId": "master",
+  "clientIds": ["opengate-console"],
+  "ipAddress": "192.168.1.10",
+  "userAgent": "Chrome 120 / macOS"
+}`} />
+
+**Response:**
+<CodeBlock language="json" code={`{
+  "sessionId": "ses_abc123xyz",
+  "userId": "usr_abc123",
+  "realmId": "master",
+  "ipAddress": "192.168.1.10",
+  "createdAt": "2024-01-15T10:00:00Z",
+  "expiresAt": "2024-01-15T18:00:00Z"
+}`} />
+
+Sessions expire after **8 hours** (TTL stored in Redis).
+
+## Get Session
+
+```
+GET /api/sessions/{sessionId}
+```
+
+## Terminate Session
+
+```
+DELETE /api/sessions/{sessionId}
+```
+
+Publishes `session.terminated` Kafka event.
+
+## Get User Sessions
+
+```
+GET /api/users/{userId}/sessions
+```
+
+Returns all active sessions for a user across all devices.
+
+## Terminate All User Sessions
+
+```
+DELETE /api/users/{userId}/sessions
+```
+
+Revokes all sessions for the user — useful for "logout everywhere" or account compromise response.

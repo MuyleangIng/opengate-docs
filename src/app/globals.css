@@ -1,0 +1,54 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Syntax highlighting */
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&display=swap');
+
+:root {
+  --navy: #0D1B2A;
+  --cyan: #00B4D8;
+  --sidebar-width: 260px;
+}
+
+html { scroll-behavior: smooth; }
+
+/* Code blocks */
+pre {
+  background: #0f172a !important;
+  border-radius: 0.75rem !important;
+  border: 1px solid #1e293b;
+  padding: 1.25rem !important;
+  overflow-x: auto;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.8rem !important;
+  line-height: 1.75;
+}
+
+pre code {
+  background: transparent !important;
+  color: #e2e8f0 !important;
+  padding: 0 !important;
+  font-size: inherit !important;
+  font-family: inherit;
+}
+
+/* hljs token colors */
+.hljs-keyword    { color: #c792ea; }
+.hljs-string     { color: #c3e88d; }
+.hljs-comment    { color: #546e7a; font-style: italic; }
+.hljs-number     { color: #f78c6c; }
+.hljs-type       { color: #ffcb6b; }
+.hljs-title      { color: #82aaff; }
+.hljs-built_in   { color: #00B4D8; }
+.hljs-annotation { color: #ff9800; }
+.hljs-attr       { color: #80cbc4; }
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #475569; }
+
+/* Anchor offsets for sticky header */
+h2, h3, h4 { scroll-margin-top: 5rem; }

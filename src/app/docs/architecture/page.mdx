@@ -1,0 +1,74 @@
+import { Callout } from '@/components/docs/Callout';
+
+export const metadata = { title: 'Architecture Overview — OpenGate IAM' };
+
+# Architecture Overview
+
+OpenGate IAM is designed as a **true microservices architecture** — each service owns its own database, communicates asynchronously via Kafka, and is independently deployable.
+
+## Request Flow
+
+```
+Client App
+    │
+    ▼
+┌─────────────────────────────────────────┐
+│        opengate-gateway (8080)          │
+│  Spring Cloud Gateway + Redis           │
+│  CORS · Rate Limiting · Request Logging │
+└──────────────┬──────────────────────────┘
+               │ routes by path
+    ┌──────────┼──────────────────────────┐
+    ▼          ▼          ▼               ▼
+ auth(8081) user(8082) realm(8083)  rbac(8084)
+    │          │
+    ▼          ▼
+  Redis    PostgreSQL
+    │          │
+    └──────────┴──── Kafka ────► notification(8088)
+                                 session(8087)
+```
+
+## Design Principles
+
+### 1. Database per Service
+Each microservice has its own PostgreSQL database. No shared tables, no cross-service JOINs. Data consistency is maintained via eventual consistency through Kafka events.
+
+### 2. Event-Driven
+All state changes publish Kafka events. Example events:
+
+| Topic | Producer | Consumers |
+|-------|----------|-----------|
+| `user.created` | user-service | notification-service |
+| `auth.login.success` | auth-service | session-service |
+| `auth.login.failure` | auth-service | notification-service |
+| `session.terminated` | session-service | — |
+
+### 3. Gateway as Single Entry Point
+All external traffic enters through the gateway on port `8080`. Internal services are not exposed directly. The gateway handles:
+- CORS headers
+- Route matching
+- Request/response logging
+- Redis-based rate limiting (planned)
+
+### 4. Stateless Services
+All business logic services are stateless. State lives in:
+- **PostgreSQL** — persistent data (users, roles, clients, realms)
+- **Redis** — ephemeral data (sessions, OTPs, rate limit counters)
+- **Kafka** — event stream (audit trail)
+
+<Callout variant="info" title="Auth service exception">
+The auth service uses Redis to store authorization codes and refresh tokens with TTLs, making it the only service with meaningful Redis dependency.
+</Callout>
+
+## Security Model
+
+```
+Request → Gateway → Service → SecurityConfig (permit all)
+```
+
+Individual services trust the gateway. The gateway validates JWTs using Spring Security's OAuth2 Resource Server before forwarding requests. Each service's `SecurityConfig` permits all (gateway handles auth).
+
+## Multi-Tenancy (Realms)
+
+Every resource is scoped to a `realmName`. The realm is extracted from the JWT claims or from the URL path (`/realms/{realm}/...`). Realm isolation is enforced at the database query level — every repository query includes `realmName` as a filter.

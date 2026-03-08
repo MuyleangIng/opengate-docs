@@ -1,0 +1,73 @@
+import { Callout } from '@/components/docs/Callout';
+import { CodeBlock } from '@/components/docs/CodeBlock';
+
+export const metadata = { title: 'Quick Start — OpenGate IAM' };
+
+# Quick Start
+
+Get OpenGate IAM running locally in under 5 minutes using Docker Compose.
+
+## Prerequisites
+
+- Docker 24+ and Docker Compose v2
+- Java 21 (for local development)
+- Node.js 20+ (for Admin Console)
+
+## 1. Clone the Repository
+
+<CodeBlock language="bash" code={`git clone https://github.com/opengate-iam/opengate.git
+cd opengate`} />
+
+## 2. Start Infrastructure
+
+<CodeBlock language="bash" filename="Terminal" code={`# Start PostgreSQL, Redis, Kafka, Vault
+docker compose -f docker/docker-compose.infra.yml up -d
+
+# Wait for databases to be ready (~10 seconds)
+docker compose -f docker/docker-compose.infra.yml logs -f postgres`} />
+
+<Callout variant="info" title="Database initialization">
+The `init-databases.sh` script automatically creates 6 PostgreSQL databases:
+`opengate_auth`, `opengate_user`, `opengate_realm`, `opengate_rbac`, `opengate_client`, `opengate_notification`
+</Callout>
+
+## 3. Start IAM Services
+
+<CodeBlock language="bash" code={`docker compose -f docker/docker-compose.services.yml up -d`} />
+
+Wait for all services to be healthy:
+
+<CodeBlock language="bash" code={`docker compose -f docker/docker-compose.services.yml ps`} />
+
+## 4. Start the Admin Console
+
+<CodeBlock language="bash" code={`cd opengate-console
+npm install
+npm run dev`} />
+
+Open [http://localhost:3000](http://localhost:3000) and log in with:
+
+| Field | Value |
+|-------|-------|
+| Username | `admin` |
+| Password | `admin` |
+
+## 5. Verify Services
+
+Check the gateway health endpoint:
+
+<CodeBlock language="bash" code={`curl http://localhost:8080/actuator/health`} />
+
+Expected response:
+
+<CodeBlock language="json" code={`{
+  "status": "UP",
+  "components": {
+    "redis": { "status": "UP" },
+    "diskSpace": { "status": "UP" }
+  }
+}`} />
+
+<Callout variant="success" title="You're up and running!">
+Visit `http://localhost:3000` for the Admin Console and `http://localhost:3001` for this docs site.
+</Callout>

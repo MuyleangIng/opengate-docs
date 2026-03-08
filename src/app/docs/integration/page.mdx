@@ -1,0 +1,54 @@
+import { Callout } from '@/components/docs/Callout';
+
+export const metadata = { title: 'Integration Guide — OpenGate IAM' };
+
+# Integration Guide
+
+OpenGate IAM uses **standard OAuth 2.1** — the same protocol as Keycloak, Auth0, and Okta.
+Any app that can speak OAuth2 / OIDC works with OpenGate.
+
+<Callout variant="info" title="Live demo running">
+The sample frontend at **http://localhost:3003** demonstrates the full PKCE flow end-to-end.
+Log in with `admin / admin` to see it in action.
+</Callout>
+
+## Supported Flows
+
+| Flow | Use Case | Client Type |
+|---|---|---|
+| **Authorization Code + PKCE** | Browser SPA, Mobile | Public |
+| **Client Credentials** | Server-to-server, microservices | Confidential |
+| **Refresh Token** | Long-lived sessions | Both |
+
+## Endpoints
+
+All endpoints are reachable through the gateway on port **9080**:
+
+| Endpoint | URL |
+|---|---|
+| Authorization | `http://localhost:9081/oauth2/authorize` |
+| Token | `http://localhost:9081/oauth2/token` |
+| JWKS (public keys) | `http://localhost:9081/oauth2/jwks` |
+| Userinfo | `http://localhost:9081/userinfo` |
+| Discovery | `http://localhost:9080/realms/master/.well-known/openid-configuration` |
+
+## JWT Claims
+
+Every token issued by OpenGate includes:
+
+```json
+{
+  "sub": "admin",
+  "preferred_username": "admin",
+  "realm": "master",
+  "roles": ["admin", "user"],
+  "realm_access": {
+    "roles": ["admin", "user"]
+  },
+  "iat": 1234567890,
+  "exp": 1234568790,
+  "iss": "http://localhost:9080/realms/master"
+}
+```
+
+The `realm_access.roles` format is **Keycloak-compatible** — existing Keycloak adapters work without changes.
