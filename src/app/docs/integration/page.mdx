@@ -4,51 +4,57 @@ export const metadata = { title: 'Integration Guide — OpenGate IAM' };
 
 # Integration Guide
 
-OpenGate IAM uses **standard OAuth 2.1** — the same protocol as Keycloak, Auth0, and Okta.
-Any app that can speak OAuth2 / OIDC works with OpenGate.
+Connect your applications to OpenGate IAM using standard OAuth 2.1 / OIDC — compatible with any language or framework.
 
-<Callout variant="info" title="Live demo running">
-The sample frontend at **http://localhost:3003** demonstrates the full PKCE flow end-to-end.
-Log in with `admin / admin` to see it in action.
-</Callout>
+## On this page
 
-## Supported Flows
+- [Integration Patterns](#integration-patterns)
+- [Quick Integration Checklist](#quick-integration-checklist)
 
-| Flow | Use Case | Client Type |
-|---|---|---|
-| **Authorization Code + PKCE** | Browser SPA, Mobile | Public |
-| **Client Credentials** | Server-to-server, microservices | Confidential |
-| **Refresh Token** | Long-lived sessions | Both |
+---
 
-## Endpoints
+## Integration Patterns
 
-All endpoints are reachable through the gateway on port **9080**:
-
-| Endpoint | URL |
-|---|---|
-| Authorization | `http://localhost:9081/oauth2/authorize` |
-| Token | `http://localhost:9081/oauth2/token` |
-| JWKS (public keys) | `http://localhost:9081/oauth2/jwks` |
-| Userinfo | `http://localhost:9081/userinfo` |
-| Discovery | `http://localhost:9080/realms/master/.well-known/openid-configuration` |
-
-## JWT Claims
-
-Every token issued by OpenGate includes:
-
-```json
-{
-  "sub": "admin",
-  "preferred_username": "admin",
-  "realm": "master",
-  "roles": ["admin", "user"],
-  "realm_access": {
-    "roles": ["admin", "user"]
-  },
-  "iat": 1234567890,
-  "exp": 1234568790,
-  "iss": "http://localhost:9080/realms/master"
-}
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                    Integration Patterns                             │
+│                                                                     │
+│  ┌──────────────────────────┐   ┌───────────────────────────────┐   │
+│  │  Browser SPA / Mobile    │   │    Backend / Microservice     │   │
+│  │                          │   │                               │   │
+│  │  Auth Code + PKCE        │   │  Client Credentials Grant     │   │
+│  │  → opengate-console      │   │  → opengate-admin-api         │   │
+│  │  → Your React app        │   │  → Your backend service       │   │
+│  │  → Your mobile app       │   │                               │   │
+│  └──────────────────────────┘   └───────────────────────────────┘   │
+│                                                                     │
+│  ┌──────────────────────────┐   ┌───────────────────────────────┐   │ 
+│  │   Spring Boot API        │   │    Next.js (Full-stack)       │   │
+│  │                          │   │                               │   │
+│  │  OAuth2 Resource Server  │   │  next-auth / Auth.js          │   │ 
+│  │  JWT validation via JWKS │   │  Server-side session mgmt     │   │
+│  └──────────────────────────┘   └───────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────────┘
 ```
 
-The `realm_access.roles` format is **Keycloak-compatible** — existing Keycloak adapters work without changes.
+| Client Type | Flow | Guide |
+|---|---|---|
+| React / Next.js SPA | Authorization Code + PKCE | [React / Next.js](/docs/integration/react) |
+| Spring Boot API | OAuth2 Resource Server | [Spring Boot](/docs/integration/spring-boot) |
+| Backend service | Client Credentials | [Spring Boot](/docs/integration/spring-boot) |
+| CLI tool | Device Code | Coming soon |
+
+---
+
+## Quick Integration Checklist
+
+- [ ] Register your app as an OAuth2 client in the Admin Console
+- [ ] Note your `client_id` (and `client_secret` for confidential clients)
+- [ ] Fetch the OIDC discovery document: `GET /realms/{realm}/.well-known/openid-configuration`
+- [ ] Implement Authorization Code + PKCE for browser apps
+- [ ] Validate JWTs using the `jwks_uri` from the discovery document
+- [ ] Handle token refresh before expiry (access token: 5 min)
+
+<Callout variant="info" title="OIDC-compatible">
+  OpenGate is fully OIDC-compliant. Any library or framework that supports OIDC discovery will work out of the box.
+</Callout>

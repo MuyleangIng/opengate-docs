@@ -1,73 +1,117 @@
 import { Callout } from '@/components/docs/Callout';
 import { CodeBlock } from '@/components/docs/CodeBlock';
+import { Steps, Step } from '@/components/docs/Steps';
 
 export const metadata = { title: 'Quick Start — OpenGate IAM' };
 
 # Quick Start
 
-Get OpenGate IAM running locally in under 5 minutes using Docker Compose.
+Get OpenGate IAM running locally in under **5 minutes** using Docker Compose.
+
+## On this page
+
+- [Prerequisites](#prerequisites)
+- [Start the Stack](#start-the-stack)
+- [Verify Services](#verify-services)
+- [First Login](#first-login)
+
+---
 
 ## Prerequisites
 
-- Docker 24+ and Docker Compose v2
-- Java 21 (for local development)
-- Node.js 20+ (for Admin Console)
+| Requirement | Minimum Version |
+|---|---|
+| Docker | 24+ |
+| Docker Compose | v2 |
+| Java (local dev only) | 21 |
+| Node.js (Admin Console only) | 20+ |
 
-## 1. Clone the Repository
+---
 
-<CodeBlock language="bash" code={`git clone https://github.com/opengate-iam/opengate.git
-cd opengate`} />
+## Start the Stack
 
-## 2. Start Infrastructure
+<Steps>
+  <Step step={1} title="Clone the repository">
+    <CodeBlock language="bash" code={`git clone https://github.com/MuyleangIng/opengate-iam.git
+cd opengate-iam`} />
+  </Step>
 
-<CodeBlock language="bash" filename="Terminal" code={`# Start PostgreSQL, Redis, Kafka, Vault
-docker compose -f docker/docker-compose.infra.yml up -d
+  <Step step={2} title="Start infrastructure (PostgreSQL · Redis · Kafka · Vault)">
+    <CodeBlock language="bash" code={`docker compose -f docker/docker-compose.infra.yml up -d`} />
 
-# Wait for databases to be ready (~10 seconds)
-docker compose -f docker/docker-compose.infra.yml logs -f postgres`} />
+    Wait for PostgreSQL to be ready:
 
-<Callout variant="info" title="Database initialization">
-The `init-databases.sh` script automatically creates 6 PostgreSQL databases:
-`opengate_auth`, `opengate_user`, `opengate_realm`, `opengate_rbac`, `opengate_client`, `opengate_notification`
-</Callout>
+    <CodeBlock language="bash" code={`docker compose -f docker/docker-compose.infra.yml logs -f postgres`} />
 
-## 3. Start IAM Services
+    <Callout variant="info" title="Database initialisation">
+      `init-databases.sh` automatically creates all required PostgreSQL databases on first startup.
+    </Callout>
+  </Step>
 
-<CodeBlock language="bash" code={`docker compose -f docker/docker-compose.services.yml up -d`} />
+  <Step step={3} title="Start IAM microservices">
+    <CodeBlock language="bash" code={`docker compose -f docker/docker-compose.services.yml up -d`} />
 
-Wait for all services to be healthy:
+    Check all containers are healthy:
 
-<CodeBlock language="bash" code={`docker compose -f docker/docker-compose.services.yml ps`} />
+    <CodeBlock language="bash" code={`docker compose -f docker/docker-compose.services.yml ps`} />
+  </Step>
 
-## 4. Start the Admin Console
-
-<CodeBlock language="bash" code={`cd opengate-console
+  <Step step={4} title="Start the Admin Console (optional)">
+    <CodeBlock language="bash" code={`cd opengate-console
 npm install
 npm run dev`} />
 
-Open [http://localhost:3000](http://localhost:3000) and log in with:
+    Open [http://localhost:3000](http://localhost:3000) in your browser.
+  </Step>
+</Steps>
+
+---
+
+## Verify Services
+
+Run a quick health check across all services:
+
+<CodeBlock language="bash" code={`for port in 8080 8081 8082 8083 8084 8085 8086 8087 8088 8089; do
+  status=$(curl -sf http://localhost:$port/actuator/health | python3 -c "import sys,json; print(json.load(sys.stdin)['status'])" 2>/dev/null || echo "DOWN")
+  printf "Port %-5s → %s\n" $port "$status"
+done`} />
+
+Expected output when everything is healthy:
+
+<CodeBlock language="text" code={`Port 8080  → UP
+Port 8081  → UP
+Port 8082  → UP
+Port 8083  → UP
+Port 8084  → UP
+Port 8085  → UP
+Port 8086  → UP
+Port 8087  → UP
+Port 8088  → UP
+Port 8089  → UP`} />
+
+---
+
+## First Login
 
 | Field | Value |
-|-------|-------|
+|---|---|
+| Admin Console | `http://localhost:3000` |
 | Username | `admin` |
 | Password | `admin` |
+| API Gateway | `http://localhost:8080` |
+| Docs | `http://localhost:3001` |
 
-## 5. Verify Services
+<Callout variant="warning" title="Change the default admin password">
+  The default `admin / admin` credentials are for local development only. Change them before exposing any endpoint to the internet.
+</Callout>
 
-Check the gateway health endpoint:
+### Get your first access token
 
-<CodeBlock language="bash" code={`curl http://localhost:8080/actuator/health`} />
-
-Expected response:
-
-<CodeBlock language="json" code={`{
-  "status": "UP",
-  "components": {
-    "redis": { "status": "UP" },
-    "diskSpace": { "status": "UP" }
-  }
-}`} />
+<CodeBlock language="bash" code={`curl -s -X POST http://localhost:8080/realms/master/protocol/openid-connect/token \\
+  -d "grant_type=client_credentials" \\
+  -d "client_id=admin-cli" \\
+  -d "client_secret=admin-secret" | jq .`} />
 
 <Callout variant="success" title="You're up and running!">
-Visit `http://localhost:3000` for the Admin Console and `http://localhost:3001` for this docs site.
+  OpenGate IAM is live. Continue with [Installation](/docs/getting-started/installation) to learn about local development without Docker.
 </Callout>

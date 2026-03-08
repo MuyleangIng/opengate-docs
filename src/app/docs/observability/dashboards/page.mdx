@@ -1,128 +1,98 @@
-export const metadata = { title: 'Grafana Dashboards' };
+import { Callout } from '@/components/docs/Callout';
+import { CodeBlock } from '@/components/docs/CodeBlock';
+
+export const metadata = { title: 'Grafana Dashboards — OpenGate IAM' };
 
 # Grafana Dashboards
 
-OpenGate IAM ships pre-built **Grafana dashboards** for monitoring authentication events, session activity, JVM health, and HTTP performance across all services.
+OpenGate IAM includes pre-built **Grafana dashboards** for monitoring authentication events, session activity, JVM health, and HTTP performance.
 
-## Included Dashboards
+## On this page
+
+- [Quick Start](#quick-start)
+- [Available Dashboards](#available-dashboards)
+- [Key Panels](#key-panels)
+- [Useful PromQL Queries](#useful-promql-queries)
+
+---
+
+## Quick Start
+
+<CodeBlock language="bash" code={`# Start Prometheus + Grafana
+docker compose -f docker/docker-compose.observability.yml up -d
+
+# Open Grafana
+open http://localhost:3002   # admin / admin`} />
+
+Import the dashboard JSON from the `observability/dashboards/` directory in the repository.
+
+---
+
+## Available Dashboards
 
 | Dashboard | Description |
 |---|---|
-| **OpenGate Overview** | Total logins, active sessions, token issuance rate |
-| **Auth Service** | Login success/failure rate, token latency, PKCE usage |
-| **User Service** | User CRUD operations, password reset activity |
-| **Session Monitor** | Active sessions per realm, session revocations |
-| **JVM Health** | Heap memory, GC pauses, thread count per service |
-| **HTTP Performance** | Request rate, error rate, p50/p95/p99 latency |
+| **OpenGate Overview** | Login rates, active sessions, error rates across all services |
+| **Auth Service** | Token issuance, MFA usage, grant type breakdown |
+| **JVM Health** | Heap usage, GC pauses, thread counts per service |
+| **HTTP Performance** | P50/P95/P99 latency, request rates, error rates |
+| **Database** | HikariCP pool usage, query duration, connection errors |
 
-## Quick Setup
+---
 
-```bash
-# Start Prometheus + Grafana with Docker Compose
-docker compose -f docker-compose.monitoring.yml up -d
+## Key Panels
 
-# Open Grafana
-open http://localhost:3000
-# Default login: admin / admin
-```
-
-## docker-compose.monitoring.yml
-
-```yaml
-version: '3.8'
-services:
-  prometheus:
-    image: prom/prometheus:v2.51.0
-    volumes:
-      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
-      - prometheus_data:/prometheus
-    ports:
-      - "9090:9090"
-    command:
-      - '--config.file=/etc/prometheus/prometheus.yml'
-      - '--storage.tsdb.retention.time=15d'
-
-  grafana:
-    image: grafana/grafana:10.4.0
-    volumes:
-      - grafana_data:/var/lib/grafana
-      - ./monitoring/dashboards:/etc/grafana/provisioning/dashboards
-      - ./monitoring/datasources:/etc/grafana/provisioning/datasources
-    ports:
-      - "3000:3000"
-    environment:
-      - GF_SECURITY_ADMIN_PASSWORD=admin
-      - GF_USERS_ALLOW_SIGN_UP=false
-    depends_on:
-      - prometheus
-
-volumes:
-  prometheus_data:
-  grafana_data:
-```
-
-## Grafana Data Source Config
-
-```yaml
-# monitoring/datasources/prometheus.yml
-apiVersion: 1
-datasources:
-  - name: Prometheus
-    type: prometheus
-    access: proxy
-    url: http://prometheus:9090
-    isDefault: true
-
-  - name: Loki
-    type: loki
-    access: proxy
-    url: http://loki:3100
-```
-
-## Key Panels — OpenGate Overview Dashboard
+### Login Success / Failure Rate
 
 ```
-┌──────────────────┬──────────────────┬──────────────────┐
-│  Logins / min    │  Active Sessions  │  Tokens Issued   │
-│     124          │      847          │    1,293 / hr    │
-├──────────────────┴──────────────────┴──────────────────┤
-│  Login Success Rate                                     │
-│  ████████████████████████████░░░░  94.2%               │
-├────────────────────────────────────────────────────────┤
-│  HTTP p99 Latency by Service (ms)                       │
-│  auth-service:  45ms                                    │
-│  user-service:  12ms                                    │
-│  rbac-service:   8ms                                    │
-└────────────────────────────────────────────────────────┘
+# Logins per minute (success)
+rate(opengate_login_success_total[1m]) * 60
+
+# Logins per minute (failure)
+rate(opengate_login_failure_total[1m]) * 60
 ```
 
-## Import Dashboards Manually
+### Active Sessions
 
-1. Go to `Grafana → Dashboards → Import`
-2. Upload JSON files from `monitoring/dashboards/` in the repo
-3. Select the **Prometheus** data source
-4. Click **Import**
-
-## Alerts
-
-```yaml
-# monitoring/alerts/opengate.yml
-groups:
-  - name: opengate
-    rules:
-      - alert: HighLoginFailureRate
-        expr: rate(opengate_auth_logins_failed_total[5m]) > 10
-        for: 2m
-        labels:
-          severity: warning
-        annotations:
-          summary: "High login failure rate detected"
-
-      - alert: ServiceDown
-        expr: up{job=~"opengate-.*"} == 0
-        for: 1m
-        labels:
-          severity: critical
-        annotations:
-          summary: "OpenGate service {{ $labels.job }} is down"
 ```
+opengate_sessions_active_total
+```
+
+### HTTP P95 Latency
+
+```
+histogram_quantile(0.95,
+  rate(http_server_requests_seconds_bucket{job="opengate-gateway"}[5m])
+)
+```
+
+### JVM Heap Usage
+
+```
+jvm_memory_used_bytes{area="heap"} / jvm_memory_max_bytes{area="heap"} * 100
+```
+
+---
+
+## Useful PromQL Queries
+
+<CodeBlock language="promql" code={`# Error rate per service (5xx responses)
+sum by (job) (
+  rate(http_server_requests_seconds_count{status=~"5.."}[5m])
+)
+
+# DB connection pool saturation
+hikaricp_connections_active / hikaricp_connections_max * 100
+
+# MFA challenge rate
+rate(opengate_mfa_challenge_total[5m])
+
+# Top slowest endpoints
+topk(10, http_server_requests_seconds_max{job="opengate-gateway"})`} />
+
+<Callout variant="info" title="Pre-built dashboard IDs (Grafana.com)">
+  Import these community dashboards as a starting point:
+  - `4701` — JVM Micrometer
+  - `6756` — Spring Boot Statistics
+  - `11378` — Redis Exporter
+</Callout>

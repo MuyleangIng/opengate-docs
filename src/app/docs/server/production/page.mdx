@@ -1,74 +1,156 @@
 import { Callout } from '@/components/docs/Callout';
+import { CodeBlock } from '@/components/docs/CodeBlock';
 
-export const metadata = { title: 'Production Configuration — OpenGate IAM' };
+export const metadata = { title: 'Production Setup — OpenGate IAM' };
 
-# Configuring for Production
+# Production Setup
 
-<Callout variant="warning" title="Before going to production">
-Complete this checklist before exposing OpenGate to the internet.
+## On this page
+
+- [Security Checklist](#security-checklist)
+- [Recommended Settings](#recommended-settings)
+- [Database](#database)
+- [Reverse Proxy](#reverse-proxy)
+- [Monitoring Endpoints](#monitoring-endpoints)
+
+---
+
+## Security Checklist
+
+Before going live, complete every item:
+
+**Credentials & Secrets**
+- [ ] Change all default passwords — PostgreSQL, Redis, admin account
+- [ ] Enable **Redis AUTH** with a strong password
+- [ ] Replace in-memory RSA keys with **Vault-backed key storage**
+- [ ] Use Kubernetes Secrets or Vault for all credentials — never hardcode
+
+**Network**
+- [ ] **TLS/HTTPS** everywhere — terminate SSL at load balancer or gateway
+- [ ] Microservices are **not** publicly accessible — only through gateway
+- [ ] Set `allowedOrigins` to your actual domain (remove `localhost`)
+- [ ] Enable **Kafka SSL and SASL** for internal messaging
+
+**Application**
+- [ ] Set `spring.jpa.show-sql: false`
+- [ ] Set `spring.jpa.hibernate.ddl-auto: validate` (never `create-drop`)
+- [ ] Restrict `/actuator/**` to internal networks only
+- [ ] Enable `mfaRequired: true` on sensitive realms
+- [ ] Adjust token lifespans — shorter access tokens (5 min), shorter refresh (7 days)
+
+<Callout variant="danger" title="Never expose actuator publicly">
+  `/actuator/env`, `/actuator/beans`, and `/actuator/heapdump` expose sensitive runtime data. Restrict them to internal networks.
 </Callout>
 
-## Security checklist
+---
 
-- [ ] Change all default passwords (PostgreSQL, Redis, admin account)
-- [ ] Enable TLS on the gateway (see [Configuring TLS](/docs/server/tls))
-- [ ] Set a strong `JWT_SECRET` (RS256 key pair, minimum 2048-bit)
-- [ ] Configure `allowedOrigins` to your actual domain (remove `localhost`)
-- [ ] Enable Redis authentication
-- [ ] Use Kubernetes Secrets or Vault for all credentials
-- [ ] Set `SPRING_JPA_SHOW_SQL=false`
-- [ ] Configure Kafka with TLS and SASL authentication
+## Recommended Settings
 
-## Recommended production settings
-
-```yaml
-spring:
+<CodeBlock language="yaml" filename="application.yml (all services, production)" code={`spring:
   jpa:
     show-sql: false
     hibernate:
-      ddl-auto: validate      # never use create-drop in production
+      ddl-auto: validate
+  flyway:
+    enabled: true
 
 server:
   tomcat:
     max-connections: 10000
-
-opengate:
-  token:
-    access-token-ttl: 300     # 5 minutes (shorter in production)
-    refresh-token-ttl: 604800 # 7 days
+    accept-count: 100
+  forward-headers-strategy: framework   # trust X-Forwarded-* from proxy
 
 management:
   endpoints:
     web:
       exposure:
-        include: health,metrics  # do NOT expose env, beans, etc.
-```
+        include: health,metrics,prometheus
+      base-path: /actuator
+  endpoint:
+    health:
+      show-details: never     # hide sensitive details from public
+  server:
+    port: 9090                # expose actuator on separate internal port
+
+opengate:
+  token:
+    access-token-ttl: 300     # 5 minutes
+    refresh-token-ttl: 604800 # 7 days`} />
+
+---
 
 ## Database
 
-Use a managed PostgreSQL instance (AWS RDS, Google Cloud SQL, Azure Database) with:
-- Automatic backups enabled
-- Read replicas for the user and realm services
-- Connection pooling via PgBouncer
+Use a managed PostgreSQL instance (AWS RDS, Google Cloud SQL, Azure Database for PostgreSQL):
 
-## Reverse proxy
+```
+┌───────────────────────────────────────────────────────────┐
+│                Production Database Setup                  │
+│                                                           │
+│   ┌─────────────────┐          ┌─────────────────────┐   │
+│   │   Primary DB    │──────────│    Read Replica     │   │
+│   │  (writes only)  │  repl    │   (reads only)      │   │
+│   └────────┬────────┘          └─────────────────────┘   │
+│            │                                              │
+│   ┌────────▼────────┐                                     │
+│   │   PgBouncer     │  ← Connection pooling               │
+│   │  (pool: 100)    │                                     │
+│   └────────┬────────┘                                     │
+│            │                                              │
+│   Microservices (max 10 connections each)                 │
+└───────────────────────────────────────────────────────────┘
+```
 
-Put Nginx or Caddy in front of the gateway:
+- Enable **automatic backups** with at least 7-day retention
+- Enable **point-in-time recovery (PITR)**
+- Use **PgBouncer** for connection pooling
+- Set up **read replicas** for user-service and realm-service
 
-```nginx
+---
+
+## Reverse Proxy
+
+<CodeBlock language="nginx" filename="/etc/nginx/sites-available/opengate" code={`server {
+    listen 80;
+    server_name iam.yourdomain.com;
+    return 301 https://$host$request_uri;
+}
+
 server {
-    listen 443 ssl;
+    listen 443 ssl http2;
     server_name iam.yourdomain.com;
 
-    ssl_certificate     /etc/ssl/certs/iam.crt;
-    ssl_certificate_key /etc/ssl/private/iam.key;
+    ssl_certificate     /etc/letsencrypt/live/iam.yourdomain.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/iam.yourdomain.com/privkey.pem;
+    ssl_protocols       TLSv1.2 TLSv1.3;
+    ssl_session_cache   shared:SSL:10m;
+
+    add_header Strict-Transport-Security "max-age=63072000; includeSubDomains" always;
+    add_header X-Frame-Options DENY always;
+    add_header X-Content-Type-Options nosniff always;
 
     location / {
-        proxy_pass http://localhost:9080;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_pass         http://localhost:8080;
+        proxy_set_header   Host $host;
+        proxy_set_header   X-Real-IP $remote_addr;
+        proxy_set_header   X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header   X-Forwarded-Proto $scheme;
     }
-}
-```
+}`} />
+
+---
+
+## Monitoring Endpoints
+
+Each service exposes Spring Actuator endpoints:
+
+| Endpoint | Description |
+|---|---|
+| `GET /actuator/health` | Service health + dependency status |
+| `GET /actuator/metrics` | JVM, HTTP, DB metrics |
+| `GET /actuator/prometheus` | Prometheus-format metrics |
+| `GET /actuator/info` | Build info, version |
+
+<Callout variant="warning" title="Restrict actuator in production">
+  Only expose `health`, `metrics`, and `prometheus`. Never expose `env`, `beans`, `heapdump`, or `threaddump` publicly.
+</Callout>

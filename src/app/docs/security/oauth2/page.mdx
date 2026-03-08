@@ -1,127 +1,154 @@
-export const metadata = { title: 'OAuth 2.1 / OIDC' };
+import { Callout } from '@/components/docs/Callout';
+import { CodeBlock } from '@/components/docs/CodeBlock';
+
+export const metadata = { title: 'OAuth 2.1 / OIDC — OpenGate IAM' };
 
 # OAuth 2.1 / OIDC
 
-OpenGate IAM implements **OAuth 2.1** and **OpenID Connect (OIDC)** via [Spring Authorization Server 1.3](https://spring.io/projects/spring-authorization-server). It is the recommended standard for securing modern web apps, APIs, and CLI tools.
+OpenGate IAM implements **OAuth 2.1** and **OpenID Connect (OIDC)** via Spring Authorization Server 1.3 — the recommended standard for securing modern web apps, APIs, and CLI tools.
+
+## On this page
+
+- [Supported Grant Types](#supported-grant-types)
+- [Authorization Code + PKCE](#authorization-code--pkce)
+- [Client Credentials](#client-credentials)
+- [OIDC Endpoints](#oidc-endpoints)
+- [JWT Access Token Structure](#jwt-access-token-structure)
+- [Token Validation](#token-validation)
+
+---
 
 ## Supported Grant Types
 
-| Grant Type | Use Case |
-|---|---|
-| `authorization_code` + PKCE | Browser apps, SPAs, mobile apps |
-| `client_credentials` | Server-to-server / machine auth |
-| `refresh_token` | Silent token renewal |
-| `device_code` | CLI tools, smart TVs |
+| Grant Type | Use Case | PKCE Required |
+|---|---|---|
+| `authorization_code` | Browser apps, SPAs, mobile apps | ✅ Yes |
+| `client_credentials` | Server-to-server / machine auth | No |
+| `refresh_token` | Silent token renewal | No |
 
-> **OAuth 2.1 removes** the implicit grant and requires PKCE for all authorization code flows.
+<Callout variant="info" title="OAuth 2.1 removes implicit grant">
+  OAuth 2.1 removes the implicit grant and requires PKCE for all authorization code flows. OpenGate enforces this by default.
+</Callout>
 
-## Authorization Code + PKCE Flow
+---
 
-This is the recommended flow for any app running in a browser.
+## Authorization Code + PKCE
 
-```bash
-# Step 1 — Generate code_verifier (random 64 bytes, base64url)
-CODE_VERIFIER=$(openssl rand -base64 64 | tr '+/' '-_' | tr -d '=\n')
+```
+  Client App                  OpenGate Gateway           Auth Service
+      │                              │                        │
+      │ 1. Generate code_verifier    │                        │
+      │    code_challenge =          │                        │
+      │    BASE64URL(SHA256(cv))     │                        │
+      │                              │                        │
+      │ 2. GET /auth                 │                        │
+      │    ?response_type=code       │                        │
+      │    &client_id=my-app         │                        │
+      │    &code_challenge=...       │───────────────────────►│
+      │    &scope=openid profile     │                        │
+      │                              │                        │ Show login
+      │◄───────────────────────────────────────────────────── │
+      │                              │                        │
+      │ 3. User submits credentials  │                        │
+      │─────────────────────────────────────────────────────► │
+      │                              │                        │ Verify + issue code
+      │ 4. Redirect ?code=<code>     │                        │
+      │◄──────────────────────────────────────────────────────│
+      │                              │                        │
+      │ 5. POST /token               │                        │
+      │    grant_type=authorization_code                      │
+      │    code=<code>               │───────────────────────►│
+      │    code_verifier=<cv>        │                        │ Verify PKCE + issue JWT
+      │ 6. { access_token,           │◄───────────────────────│
+      │      refresh_token,          │                        │
+      │      id_token }              │                        │
+      │◄─────────────────────────────│                        │
+```
 
-# Step 2 — Compute code_challenge (SHA-256 of verifier)
+<CodeBlock language="bash" code={`# Step 1 — Generate PKCE verifier + challenge
+CODE_VERIFIER=$(openssl rand -base64 64 | tr '+/' '-_' | tr -d '=\\n')
 CODE_CHALLENGE=$(echo -n "$CODE_VERIFIER" | openssl dgst -sha256 -binary | base64 | tr '+/' '-_' | tr -d '=')
 
-# Step 3 — Redirect user to authorization endpoint
-GET http://localhost:9081/oauth2/authorize
-  ?response_type=code
-  &client_id=sample-app
-  &redirect_uri=http://localhost:3003/callback
-  &scope=openid profile email
-  &code_challenge=$CODE_CHALLENGE
-  &code_challenge_method=S256
-  &state=<random_state>
+# Step 2 — Redirect user to authorization endpoint
+open "http://localhost:8080/realms/master/protocol/openid-connect/auth?\\
+response_type=code&client_id=my-app&redirect_uri=http://localhost:3000/callback&\\
+scope=openid+profile+email&code_challenge=$CODE_CHALLENGE&code_challenge_method=S256"
 
-# Step 4 — Exchange code for tokens
-POST http://localhost:9081/oauth2/token
-Content-Type: application/x-www-form-urlencoded
+# Step 5 — Exchange code for tokens
+curl -X POST http://localhost:8080/realms/master/protocol/openid-connect/token \\
+  -d "grant_type=authorization_code" \\
+  -d "code=<auth_code>" \\
+  -d "redirect_uri=http://localhost:3000/callback" \\
+  -d "client_id=my-app" \\
+  -d "code_verifier=$CODE_VERIFIER"`} />
 
-grant_type=authorization_code
-&code=<auth_code>
-&redirect_uri=http://localhost:3003/callback
-&client_id=sample-app
-&code_verifier=$CODE_VERIFIER
-```
+---
+
+## Client Credentials
+
+For server-to-server communication — no user involved.
+
+<CodeBlock language="bash" code={`curl -X POST http://localhost:8080/realms/master/protocol/openid-connect/token \\
+  -u "backend-service:client-secret" \\
+  -d "grant_type=client_credentials" \\
+  -d "scope=openid"`} />
+
+---
 
 ## OIDC Endpoints
 
-| Endpoint | URL |
+| Endpoint | Path |
 |---|---|
-| Discovery | `http://localhost:9081/.well-known/openid-configuration` |
-| Authorization | `http://localhost:9081/oauth2/authorize` |
-| Token | `http://localhost:9081/oauth2/token` |
-| JWKS | `http://localhost:9081/oauth2/jwks` |
-| Userinfo | `http://localhost:9081/userinfo` |
-| Revoke | `http://localhost:9081/oauth2/revoke` |
+| Discovery | `/realms/{realm}/.well-known/openid-configuration` |
+| Authorization | `/realms/{realm}/protocol/openid-connect/auth` |
+| Token | `/realms/{realm}/protocol/openid-connect/token` |
+| JWKS | `/realms/{realm}/protocol/openid-connect/certs` |
+| Userinfo | `/realms/{realm}/protocol/openid-connect/userinfo` |
+| Revoke | `/realms/{realm}/protocol/openid-connect/revoke` |
+
+---
 
 ## JWT Access Token Structure
 
-```json
-{
-  "sub": "user-uuid",
-  "iss": "http://localhost:9081",
-  "aud": ["sample-app"],
-  "exp": 1700000000,
-  "iat": 1699996400,
-  "scope": "openid profile email",
-  "roles": ["ROLE_USER", "ROLE_ADMIN"],
+Tokens are signed with **RSA-2048** (`RS256`). Verify using the JWKS endpoint.
+
+<CodeBlock language="json" filename="JWT Payload (decoded)" code={`{
+  "iss": "http://localhost:8080/realms/master",
+  "sub": "usr_abc123",
+  "aud": ["my-app"],
+  "exp": 1705312800,
+  "iat": 1705309200,
+  "jti": "550e8400-e29b-41d4-a716-446655440000",
   "realm": "master",
-  "email": "user@example.com"
-}
-```
+  "email": "alice@example.com",
+  "email_verified": true,
+  "roles": ["ROLE_ADMIN", "ROLE_USER"],
+  "scope": "openid profile email"
+}`} />
 
-Tokens are signed with **RSA-2048** keys. Verify using the JWKS endpoint.
+---
 
-## Registering a Public Client (PKCE)
+## Token Validation
 
-```yaml
-# application.yml excerpt for opengate-auth-service
-clients:
-  - client-id: my-spa
-    client-authentication-methods:
-      - none          # public client — no secret
-    authorization-grant-types:
-      - authorization_code
-      - refresh_token
-    redirect-uris:
-      - http://localhost:3000/callback
-    scopes:
-      - openid
-      - profile
-      - email
-    require-proof-key: true   # enforce PKCE
-```
+**Spring Boot Resource Server:**
 
-## Client Credentials (Server-to-Server)
-
-```bash
-curl -X POST http://localhost:9081/oauth2/token \
-  -u "backend-service:secret" \
-  -d "grant_type=client_credentials&scope=read write"
-```
-
-## Token Validation (Spring Boot Resource Server)
-
-```java
-@Configuration
+<CodeBlock language="java" filename="ResourceServerConfig.java" code={`@Configuration
 @EnableWebSecurity
+@EnableMethodSecurity
 public class ResourceServerConfig {
 
   @Bean
   public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
-    http
+    return http
       .authorizeHttpRequests(auth -> auth
         .requestMatchers("/public/**").permitAll()
         .anyRequest().authenticated()
       )
       .oauth2ResourceServer(oauth2 -> oauth2
-        .jwt(jwt -> jwt.jwkSetUri("http://localhost:9081/oauth2/jwks"))
-      );
-    return http.build();
+        .jwt(jwt -> jwt.jwkSetUri(
+          "http://localhost:8080/realms/master/protocol/openid-connect/certs"
+        ))
+      )
+      .build();
   }
-}
-```
+}`} />

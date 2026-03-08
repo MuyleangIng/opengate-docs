@@ -1,62 +1,87 @@
+import { Callout } from '@/components/docs/Callout';
 import { CodeBlock } from '@/components/docs/CodeBlock';
 
 export const metadata = { title: 'Sessions API — OpenGate IAM' };
 
 # Sessions API
 
-Base path: `/api/sessions` and `/api/users/{userId}/sessions`
+Query and manage active sessions. Sessions are stored in Redis with configurable TTL.
 
-## Create Session
+## On this page
+
+- [List Sessions](#list-sessions)
+- [Get Session](#get-session)
+- [Revoke Session](#revoke-session)
+- [Revoke All User Sessions](#revoke-all-user-sessions)
+
+---
+
+## List Sessions
 
 ```
-POST /api/sessions
+GET /api/sessions?realm={realm}&userId={userId}
+Authorization: Bearer <token>
 ```
-<CodeBlock language="json" code={`{
-  "userId": "usr_abc123",
-  "realmId": "master",
-  "clientIds": ["opengate-console"],
-  "ipAddress": "192.168.1.10",
-  "userAgent": "Chrome 120 / macOS"
-}`} />
 
-**Response:**
-<CodeBlock language="json" code={`{
-  "sessionId": "ses_abc123xyz",
-  "userId": "usr_abc123",
-  "realmId": "master",
-  "ipAddress": "192.168.1.10",
-  "createdAt": "2024-01-15T10:00:00Z",
-  "expiresAt": "2024-01-15T18:00:00Z"
-}`} />
+<CodeBlock language="bash" code={`curl -H "Authorization: Bearer $TOKEN" \\
+  "http://localhost:8080/api/sessions?realm=master&userId=usr_abc123"`} />
 
-Sessions expire after **8 hours** (TTL stored in Redis).
+<CodeBlock language="json" code={`[
+  {
+    "sessionId": "sess-uuid-1",
+    "userId": "usr_abc123",
+    "realmId": "master",
+    "clientIds": ["opengate-console"],
+    "ipAddress": "192.168.1.10",
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) ...",
+    "createdAt": "2025-06-01T10:00:00Z",
+    "expiresAt": "2025-06-01T18:00:00Z"
+  }
+]`} />
+
+---
 
 ## Get Session
 
 ```
 GET /api/sessions/{sessionId}
+Authorization: Bearer <token>
 ```
 
-## Terminate Session
+---
+
+## Revoke Session
 
 ```
 DELETE /api/sessions/{sessionId}
+Authorization: Bearer <token>
 ```
 
-Publishes `session.terminated` Kafka event.
+**Response:** `204 No Content`
 
-## Get User Sessions
+The session is removed from Redis and the JWT is added to the token blacklist. The user is immediately logged out of that device — no need to wait for token expiry.
+
+<Callout variant="info" title="Immediate effect">
+  Session revocation takes effect within milliseconds via the Redis blacklist — not just at token expiry.
+</Callout>
+
+---
+
+## Revoke All User Sessions
 
 ```
-GET /api/users/{userId}/sessions
+DELETE /api/sessions?realm={realm}&userId={userId}
+Authorization: Bearer <token>
 ```
 
-Returns all active sessions for a user across all devices.
+<CodeBlock language="bash" code={`# Force logout all devices for a user
+curl -X DELETE \\
+  -H "Authorization: Bearer $TOKEN" \\
+  "http://localhost:8080/api/sessions?realm=master&userId=usr_abc123"`} />
 
-## Terminate All User Sessions
+**Response:** `204 No Content`
 
-```
-DELETE /api/users/{userId}/sessions
-```
-
-Revokes all sessions for the user — useful for "logout everywhere" or account compromise response.
+Use this for:
+- Password reset (force all existing sessions to end)
+- Suspicious activity detected
+- User account suspension

@@ -5,23 +5,70 @@ export const metadata = { title: 'Docker Compose — OpenGate IAM' };
 
 # Docker Compose Deployment
 
+## On this page
+
+- [Stack Overview](#stack-overview)
+- [Infrastructure Stack](#infrastructure-stack)
+- [Starting Services](#starting-services)
+- [Health Checks](#health-checks)
+- [Database Initialisation](#database-initialisation)
+
+---
+
+## Stack Overview
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    docker-compose.infra.yml                 │
+│                                                             │
+│   ┌─────────────┐  ┌─────────┐  ┌──────────┐  ┌────────┐    │
+│   │ PostgreSQL  │  │  Redis  │  │  Kafka   │  │ Vault  │    │
+│   │    :5432    │  │  :6379  │  │  :9092   │  │  :8200 │    │
+│   └─────────────┘  └─────────┘  └──────────┘  └────────┘    │
+└─────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────┐
+│                  docker-compose.services.yml                │
+│                                                             │
+│  gateway  auth  user  realm  rbac  client  mfa  session     │
+│  notification  admin-api                                    │
+└─────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────┐
+│                     Admin Console                           │
+│                  Next.js  :3000                             │
+└─────────────────────────────────────────────────────────────┘
+```
+
+---
+
 ## Infrastructure Stack
 
-<CodeBlock language="bash" filename="docker/docker-compose.infra.yml" code={`services:
+<CodeBlock language="yaml" filename="docker/docker-compose.infra.yml" code={`services:
   postgres:
     image: postgres:16-alpine
     environment:
       POSTGRES_USER: opengate
       POSTGRES_PASSWORD: opengate
+      POSTGRES_DB: opengate
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./init-databases.sh:/docker-entrypoint-initdb.d/init.sh
     ports: ["5432:5432"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U opengate"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
 
   redis:
     image: redis:7-alpine
     command: redis-server --appendonly yes
     ports: ["6379:6379"]
+    volumes:
+      - redis_data:/data
 
   kafka:
     image: confluentinc/cp-kafka:7.6.0
@@ -33,6 +80,9 @@ export const metadata = { title: 'Docker Compose — OpenGate IAM' };
       KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
       KAFKA_LOG_DIRS: /var/lib/kafka/data
       CLUSTER_ID: MkU3OEVBNTcwNTJENDM2Qk
+    ports: ["9092:9092"]
+    volumes:
+      - kafka_data:/var/lib/kafka/data
 
   vault:
     image: hashicorp/vault:1.16
@@ -40,24 +90,36 @@ export const metadata = { title: 'Docker Compose — OpenGate IAM' };
       VAULT_DEV_ROOT_TOKEN_ID: root
       VAULT_DEV_LISTEN_ADDRESS: 0.0.0.0:8200
     cap_add: [IPC_LOCK]
-    ports: ["8200:8200"]`} />
+    ports: ["8200:8200"]
+
+volumes:
+  postgres_data:
+  redis_data:
+  kafka_data:`} />
+
+---
 
 ## Starting Services
 
 <CodeBlock language="bash" code={`# 1. Start infrastructure
 docker compose -f docker/docker-compose.infra.yml up -d
 
-# 2. Start IAM services
+# 2. Wait for postgres to be ready
+docker compose -f docker/docker-compose.infra.yml exec postgres pg_isready
+
+# 3. Start IAM services
 docker compose -f docker/docker-compose.services.yml up -d
 
-# 3. View logs
+# 4. Stream logs
 docker compose -f docker/docker-compose.services.yml logs -f
 
-# 4. Stop everything
+# 5. Stop everything
 docker compose -f docker/docker-compose.services.yml down
 docker compose -f docker/docker-compose.infra.yml down`} />
 
-## Service Health Checks
+---
+
+## Health Checks
 
 <CodeBlock language="bash" code={`# Check all service health endpoints
 for port in 8080 8081 8082 8083 8084 8085 8086 8087 8088 8089; do
@@ -65,21 +127,30 @@ for port in 8080 8081 8082 8083 8084 8085 8086 8087 8088 8089; do
   curl -s http://localhost:$port/actuator/health | grep -o '"status":"[^"]*"' || echo "unreachable"
 done`} />
 
-## Database Initialization
+<Callout variant="info" title="Flyway auto-migration">
+  All Flyway migrations run automatically when each service starts. The `master` realm is seeded by the realm-service migration.
+</Callout>
 
-The `init-databases.sh` script creates all required databases:
+---
+
+## Database Initialisation
 
 <CodeBlock language="bash" filename="docker/init-databases.sh" code={`#!/bin/bash
 set -e
 psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" <<-EOSQL
     CREATE DATABASE opengate_auth;
-    CREATE DATABASE opengate_user;
-    CREATE DATABASE opengate_realm;
+    CREATE DATABASE opengate_users;
+    CREATE DATABASE opengate_realms;
     CREATE DATABASE opengate_rbac;
-    CREATE DATABASE opengate_client;
-    CREATE DATABASE opengate_notification;
+    CREATE DATABASE opengate_clients;
+    CREATE DATABASE opengate_notifications;
 EOSQL`} />
 
-<Callout variant="info" title="Flyway auto-migration">
-All Flyway migrations run automatically when each service starts. The `master` realm is seeded by `V1__create_realms.sql`.
-</Callout>
+| Database | Owner Service |
+|---|---|
+| `opengate_auth` | opengate-auth-service |
+| `opengate_users` | opengate-user-service |
+| `opengate_realms` | opengate-realm-service |
+| `opengate_rbac` | opengate-rbac-service |
+| `opengate_clients` | opengate-client-service |
+| `opengate_notifications` | opengate-notification-service |

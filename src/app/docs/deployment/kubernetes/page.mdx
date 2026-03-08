@@ -5,18 +5,63 @@ export const metadata = { title: 'Kubernetes — OpenGate IAM' };
 
 # Kubernetes Deployment
 
+## On this page
+
+- [Prerequisites](#prerequisites)
+- [Cluster Layout](#cluster-layout)
+- [Namespace & ConfigMap](#namespace--configmap)
+- [Service Deployment](#service-deployment)
+- [Ingress (Gateway)](#ingress-gateway)
+- [Horizontal Scaling](#horizontal-scaling)
+
+---
+
 ## Prerequisites
 
-- Kubernetes 1.28+
-- Helm 3+
-- A PostgreSQL operator or managed database (RDS, Cloud SQL, etc.)
-- Redis Operator or managed Redis (ElastiCache, Memorystore)
+| Tool | Version |
+|---|---|
+| Kubernetes | 1.28+ |
+| Helm | 3+ |
+| PostgreSQL | Managed (RDS, Cloud SQL) or operator |
+| Redis | Managed (ElastiCache, Memorystore) or Redis Operator |
 
-## Namespace
+---
+
+## Cluster Layout
+
+```
+┌────────────────────────────────────────────────────────────────┐
+│                  Kubernetes Cluster                            │
+│                                                                │
+│  ┌──────────────── namespace: opengate ──────────────────────┐ │
+│  │                                                           │ │
+│  │  ┌─────────────────────────────────────────────────────┐  │ │
+│  │  │              Ingress Controller (Nginx)             │  │ │
+│  │  │         iam.yourdomain.com → gateway:8080           │  │ │
+│  │  └────────────────────────┬────────────────────────────┘  │ │
+│  │                           │                               │ │
+│  │  ┌────────────────────────▼────────────────────────────┐  │ │
+│  │  │      opengate-gateway  (Deployment: 2 replicas)     │  │ │
+│  │  └──────┬───────┬──────┬──────┬──────┬─────────────────┘  │ │
+│  │         │       │      │      │      │                    │ │
+│  │       auth    user   realm  rbac  client  mfa  session    │ │
+│  │    (2 pods) (2 pods) (2 pods) ...                         │ │
+│  │                                                           │ │
+│  │  ┌──────────────────────────────────────────────────────┐ │ │
+│  │  │           ConfigMap: opengate-config                 │ │ │
+│  │  │           Secret: opengate-secrets                   │ │ │
+│  │  └──────────────────────────────────────────────────────┘ │ │
+│  └───────────────────────────────────────────────────────────┘ │
+│                                                                │
+│  External: PostgreSQL RDS · Redis ElastiCache · Kafka MSK      │
+└────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## Namespace & ConfigMap
 
 <CodeBlock language="bash" code={`kubectl create namespace opengate`} />
-
-## ConfigMap
 
 <CodeBlock language="yaml" filename="k8s/configmap.yaml" code={`apiVersion: v1
 kind: ConfigMap
@@ -24,13 +69,28 @@ metadata:
   name: opengate-config
   namespace: opengate
 data:
-  POSTGRES_HOST: "postgres-service"
+  POSTGRES_HOST: "rds-endpoint.us-east-1.rds.amazonaws.com"
   POSTGRES_PORT: "5432"
-  REDIS_HOST: "redis-service"
+  REDIS_HOST: "elasticache-endpoint.cache.amazonaws.com"
   REDIS_PORT: "6379"
-  KAFKA_BOOTSTRAP_SERVERS: "kafka-service:9092"`} />
+  KAFKA_BOOTSTRAP_SERVERS: "kafka-broker-1:9092,kafka-broker-2:9092"
+  JWT_ISSUER_URI: "https://iam.yourdomain.com/realms/master"
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: opengate-secrets
+  namespace: opengate
+type: Opaque
+stringData:
+  POSTGRES_PASSWORD: "your-db-password"
+  REDIS_PASSWORD: "your-redis-password"`} />
 
-## Example Service Deployment
+<CodeBlock language="bash" code={`kubectl apply -f k8s/configmap.yaml`} />
+
+---
+
+## Service Deployment
 
 <CodeBlock language="yaml" filename="k8s/user-service.yaml" code={`apiVersion: apps/v1
 kind: Deployment
@@ -46,10 +106,14 @@ spec:
     metadata:
       labels:
         app: opengate-user-service
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/path: "/actuator/prometheus"
+        prometheus.io/port: "8082"
     spec:
       containers:
         - name: user-service
-          image: opengate-iam/user-service:latest
+          image: opengate/user-service:latest
           ports:
             - containerPort: 8082
           envFrom:
@@ -57,6 +121,9 @@ spec:
                 name: opengate-config
             - secretRef:
                 name: opengate-secrets
+          env:
+            - name: POSTGRES_DB
+              value: opengate_users
           readinessProbe:
             httpGet:
               path: /actuator/health/readiness
@@ -69,6 +136,13 @@ spec:
               port: 8082
             initialDelaySeconds: 60
             periodSeconds: 30
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "250m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
 ---
 apiVersion: v1
 kind: Service
@@ -82,6 +156,8 @@ spec:
     - port: 8082
       targetPort: 8082`} />
 
+---
+
 ## Ingress (Gateway)
 
 <CodeBlock language="yaml" filename="k8s/ingress.yaml" code={`apiVersion: networking.k8s.io/v1
@@ -91,9 +167,13 @@ metadata:
   namespace: opengate
   annotations:
     nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/proxy-body-size: "10m"
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
 spec:
+  ingressClassName: nginx
   tls:
-    - hosts: ["iam.yourdomain.com"]
+    - hosts:
+        - iam.yourdomain.com
       secretName: opengate-tls
   rules:
     - host: iam.yourdomain.com
@@ -107,6 +187,30 @@ spec:
                 port:
                   number: 8080`} />
 
-<Callout variant="info" title="Horizontal scaling">
-The gateway, user-service, realm-service, rbac-service, and client-service are fully stateless and can be horizontally scaled. The auth-service requires shared Redis for token state.
+---
+
+## Horizontal Scaling
+
+<CodeBlock language="yaml" filename="k8s/hpa.yaml" code={`apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: opengate-user-service-hpa
+  namespace: opengate
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: opengate-user-service
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70`} />
+
+<Callout variant="info" title="Stateless services can scale freely">
+  gateway, user-service, realm-service, rbac-service, and client-service are fully stateless — scale them freely. auth-service and session-service share Redis state and can also scale horizontally.
 </Callout>

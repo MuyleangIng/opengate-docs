@@ -1,130 +1,138 @@
-export const metadata = { title: 'Metrics (Prometheus)' };
+import { Callout } from '@/components/docs/Callout';
+import { CodeBlock } from '@/components/docs/CodeBlock';
+
+export const metadata = { title: 'Metrics (Prometheus) — OpenGate IAM' };
 
 # Metrics
 
-OpenGate IAM exposes **Prometheus-compatible metrics** via Spring Boot Actuator on every service. Scrape them with Prometheus and visualize in Grafana.
+OpenGate IAM exposes **Prometheus-compatible metrics** on every service via Spring Boot Actuator. Scrape with Prometheus and visualize in Grafana.
 
-## Metrics Endpoint
+## On this page
 
-```bash
-GET http://localhost:{port}/actuator/prometheus
-```
+- [Key Metrics](#key-metrics)
+- [Prometheus Scrape Config](#prometheus-scrape-config)
+- [Grafana Setup](#grafana-setup)
+- [Alerting Rules](#alerting-rules)
 
-Available on all services: `:9080` through `:9089`.
+---
 
 ## Key Metrics
 
-### Authentication Metrics
+### HTTP Metrics
 
-| Metric | Type | Description |
-|---|---|---|
-| `opengate_auth_logins_total` | Counter | Total login attempts |
-| `opengate_auth_logins_success_total` | Counter | Successful logins |
-| `opengate_auth_logins_failed_total` | Counter | Failed login attempts |
-| `opengate_auth_token_issued_total` | Counter | Tokens issued |
-| `opengate_auth_token_revoked_total` | Counter | Tokens revoked |
-| `opengate_mfa_challenges_total` | Counter | MFA challenges issued |
+| Metric | Description |
+|---|---|
+| `http_server_requests_seconds_count` | Total HTTP request count per endpoint |
+| `http_server_requests_seconds_sum` | Total request duration |
+| `http_server_requests_seconds_max` | Max request duration |
 
-### Session Metrics
+### JVM Metrics
 
-| Metric | Type | Description |
-|---|---|---|
-| `opengate_sessions_active` | Gauge | Current active sessions |
-| `opengate_sessions_created_total` | Counter | Sessions created |
-| `opengate_sessions_expired_total` | Counter | Sessions expired |
+| Metric | Description |
+|---|---|
+| `jvm_memory_used_bytes` | JVM heap and non-heap usage |
+| `jvm_gc_pause_seconds` | GC pause duration |
+| `jvm_threads_live_threads` | Active thread count |
 
-### JVM & HTTP Metrics (auto-exposed)
+### Database Metrics (HikariCP)
 
-```
-# JVM
-jvm_memory_used_bytes
-jvm_threads_live_threads
-jvm_gc_pause_seconds
+| Metric | Description |
+|---|---|
+| `hikaricp_connections_active` | Active DB connections |
+| `hikaricp_connections_pending` | Waiting for connection |
+| `hikaricp_connections_timeout_total` | Connection timeout count |
 
-# HTTP requests
-http_server_requests_seconds_count
-http_server_requests_seconds_sum
-http_server_requests_seconds_max
-```
+### Custom Auth Metrics
+
+| Metric | Description |
+|---|---|
+| `opengate_login_success_total` | Successful logins per realm |
+| `opengate_login_failure_total` | Failed logins per realm |
+| `opengate_token_issued_total` | Tokens issued per grant type |
+| `opengate_session_created_total` | Sessions created |
+| `opengate_mfa_challenge_total` | MFA challenges issued |
+
+---
 
 ## Prometheus Scrape Config
 
-```yaml
-# prometheus.yml
+<CodeBlock language="yaml" filename="prometheus.yml" code={`global:
+  scrape_interval: 15s
+
 scrape_configs:
   - job_name: 'opengate-gateway'
     static_configs:
-      - targets: ['localhost:9080']
+      - targets: ['localhost:8080']
     metrics_path: /actuator/prometheus
 
   - job_name: 'opengate-auth'
     static_configs:
-      - targets: ['localhost:9081']
+      - targets: ['localhost:8081']
     metrics_path: /actuator/prometheus
 
-  - job_name: 'opengate-users'
+  - job_name: 'opengate-user'
     static_configs:
-      - targets: ['localhost:9082']
+      - targets: ['localhost:8082']
     metrics_path: /actuator/prometheus
 
-  - job_name: 'opengate-admin'
-    static_configs:
-      - targets: ['localhost:9089']
-    metrics_path: /actuator/prometheus
-```
+  # Repeat for ports 8083–8089...`} />
 
-## Enable Prometheus in application.yml
+Run Prometheus with Docker:
 
-```yaml
-management:
-  endpoints:
-    web:
-      exposure:
-        include: health,prometheus,metrics,info
-  metrics:
-    export:
-      prometheus:
-        enabled: true
-    tags:
-      application: ${spring.application.name}
-      realm: master
-```
+<CodeBlock language="bash" code={`docker run -d \\
+  -p 9090:9090 \\
+  -v $(pwd)/prometheus.yml:/etc/prometheus/prometheus.yml \\
+  prom/prometheus:latest`} />
 
-## Docker Compose — Add Prometheus + Grafana
+---
 
-```yaml
-services:
+## Grafana Setup
+
+<CodeBlock language="yaml" filename="docker-compose.observability.yml" code={`services:
   prometheus:
-    image: prom/prometheus:v2.51.0
+    image: prom/prometheus:latest
+    ports: ["9090:9090"]
     volumes:
-      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
-    ports:
-      - "9090:9090"
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
 
   grafana:
-    image: grafana/grafana:10.4.0
-    ports:
-      - "3000:3000"
+    image: grafana/grafana:latest
+    ports: ["3002:3000"]
     environment:
-      - GF_SECURITY_ADMIN_PASSWORD=admin
-    depends_on:
-      - prometheus
-```
+      GF_SECURITY_ADMIN_PASSWORD: admin
+    volumes:
+      - grafana_data:/var/lib/grafana
 
-## Useful PromQL Queries
+volumes:
+  grafana_data:`} />
 
-```promql
-# Login success rate (last 5 min)
-rate(opengate_auth_logins_success_total[5m])
+1. Open `http://localhost:3002` → Login: `admin / admin`
+2. Add Prometheus data source: `http://prometheus:9090`
+3. Import dashboard ID `4701` (JVM Micrometer) from Grafana.com
 
-# Failed logins per second
-rate(opengate_auth_logins_failed_total[1m])
+---
 
-# Active sessions gauge
-opengate_sessions_active
+## Alerting Rules
 
-# p99 HTTP response time for auth service
-histogram_quantile(0.99,
-  rate(http_server_requests_seconds_bucket{job="opengate-auth"}[5m])
-)
-```
+<CodeBlock language="yaml" filename="alerts.yml" code={`groups:
+  - name: opengate
+    rules:
+      - alert: HighLoginFailureRate
+        expr: rate(opengate_login_failure_total[5m]) > 10
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High login failure rate — possible brute force"
+
+      - alert: ServiceDown
+        expr: up{job=~"opengate-.*"} == 0
+        for: 30s
+        labels:
+          severity: critical
+        annotations:
+          summary: "OpenGate service {{ $labels.job }} is down"`} />
+
+<Callout variant="info" title="Scraping tip">
+  All services run on predictable ports (8080–8089). In Kubernetes, use auto-discovery with pod annotations instead of static targets.
+</Callout>

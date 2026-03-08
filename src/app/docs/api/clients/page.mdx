@@ -5,65 +5,118 @@ export const metadata = { title: 'OAuth Clients API — OpenGate IAM' };
 
 # OAuth Clients API
 
-Base path: `/api/realms/{realm}/clients`
+Manage OAuth2 client registrations within a realm.
+
+## On this page
+
+- [List Clients](#list-clients)
+- [Create Client](#create-client)
+- [Get Client](#get-client)
+- [Rotate Client Secret](#rotate-client-secret)
+- [Delete Client](#delete-client)
+
+---
 
 ## List Clients
 
 ```
-GET /api/realms/{realm}/clients
+GET /api/clients?realm={realm}
+Authorization: Bearer <token>
 ```
 
-## Register Client
+<CodeBlock language="bash" code={`curl -H "Authorization: Bearer $TOKEN" \\
+  "http://localhost:8080/api/clients?realm=master"`} />
+
+---
+
+## Create Client
 
 ```
-POST /api/realms/{realm}/clients
+POST /api/clients
+Authorization: Bearer <token>
+Content-Type: application/json
 ```
+
+<CodeBlock language="bash" code={`curl -X POST \\
+  -H "Authorization: Bearer $TOKEN" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "realmName": "master",
+    "publicClient": false,
+    "pkceRequired": true,
+    "redirectUris": ["https://app.example.com/callback"],
+    "webOrigins": ["https://app.example.com"],
+    "grantTypes": ["authorization_code", "refresh_token"],
+    "scopes": ["openid", "profile", "email"]
+  }' \\
+  http://localhost:8080/api/clients`} />
+
+**Request fields:**
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `realmName` | `string` | ✅ | Target realm |
+| `publicClient` | `boolean` | — | Public client — no secret (default: false) |
+| `pkceRequired` | `boolean` | — | Enforce PKCE (default: true) |
+| `redirectUris` | `string[]` | ✅ | Allowed redirect URIs |
+| `webOrigins` | `string[]` | — | Allowed CORS origins |
+| `grantTypes` | `string[]` | ✅ | `authorization_code` \| `client_credentials` \| `refresh_token` |
+| `scopes` | `string[]` | — | Requested scopes (default: `openid profile email`) |
+
+**Response:** `201 Created`
 
 <CodeBlock language="json" code={`{
+  "id": "550e8400-e29b-41d4-a716-446655440000",
+  "clientId": "client-a1b2c3d4",
+  "clientSecret": "cs_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
   "realmName": "master",
   "publicClient": false,
   "pkceRequired": true,
-  "redirectUris": ["http://localhost:3000/callback"],
-  "webOrigins": ["http://localhost:3000"],
+  "redirectUris": ["https://app.example.com/callback"],
   "grantTypes": ["authorization_code", "refresh_token"],
-  "scopes": ["openid", "profile", "email"]
+  "enabled": true,
+  "createdAt": "2025-06-01T10:00:00Z"
 }`} />
 
-**Response:**
-<CodeBlock language="json" code={`{
-  "id": "550e8400-...",
-  "clientId": "client-a1b2c3d4",
-  "clientSecret": "cs_xxxxxxxxxxxxxxxx",
-  "publicClient": false,
-  "pkceRequired": true,
-  "redirectUris": ["http://localhost:3000/callback"],
-  "grantTypes": ["authorization_code", "refresh_token"],
-  "scopes": ["openid", "profile", "email"]
-}`} />
-
-<Callout variant="warning" title="Save the client secret">
-The `clientSecret` is only returned **once** on creation. Store it securely. Use the regenerate endpoint to rotate it.
+<Callout variant="warning" title="Save the client secret now">
+  The `clientSecret` is returned **only once** at creation time. Store it securely immediately — it cannot be retrieved again, only rotated.
 </Callout>
 
-## Regenerate Client Secret
+---
+
+## Get Client
 
 ```
-POST /api/realms/{realm}/clients/{clientId}/secret/regenerate
+GET /api/clients/{clientId}
+Authorization: Bearer <token>
 ```
 
-**Response:**
-<CodeBlock language="json" code={`{ "clientSecret": "cs_yyyyyyyyyyyyyy" }`} />
+<Callout variant="info" title="Client secret not returned">
+  GET responses never include the client secret. Only the hash is stored. Use the rotate endpoint to get a new secret.
+</Callout>
+
+---
+
+## Rotate Client Secret
+
+```
+POST /api/clients/{clientId}/rotate-secret
+Authorization: Bearer <token>
+```
+
+<CodeBlock language="bash" code={`curl -X POST \\
+  -H "Authorization: Bearer $TOKEN" \\
+  http://localhost:8080/api/clients/client-a1b2c3d4/rotate-secret`} />
+
+Returns a new `clientSecret`. Update your application immediately — the old secret is invalidated.
+
+---
 
 ## Delete Client
 
 ```
-DELETE /api/realms/{realm}/clients/{clientId}
+DELETE /api/clients/{clientId}
+Authorization: Bearer <token>
 ```
 
-## Client Types
-
-| Type | `publicClient` | `pkceRequired` | Secret |
-|------|----------------|----------------|--------|
-| SPA / Mobile | `true` | `true` | None |
-| Server-side app | `false` | `false` | Required |
-| Machine-to-machine | `false` | `false` | Required |
+**Response:** `204 No Content`

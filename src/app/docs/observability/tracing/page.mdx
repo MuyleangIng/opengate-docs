@@ -1,123 +1,118 @@
-export const metadata = { title: 'Distributed Tracing (OTLP)' };
+import { Callout } from '@/components/docs/Callout';
+import { CodeBlock } from '@/components/docs/CodeBlock';
+
+export const metadata = { title: 'Distributed Tracing (OTLP) — OpenGate IAM' };
 
 # Distributed Tracing (OTLP)
 
-OpenGate IAM supports **distributed tracing** via **OpenTelemetry (OTLP)**. Traces flow across all 11 microservices and can be exported to Jaeger, Tempo, or any OTLP-compatible backend.
+OpenGate IAM supports **distributed tracing** via **OpenTelemetry (OTLP)**. Traces span all 10 microservices and export to Jaeger, Tempo, or any OTLP-compatible backend.
 
-## How It Works
+## On this page
 
-Every HTTP request gets a `traceId` that propagates through all downstream service calls using the **W3C TraceContext** standard:
+- [How Tracing Works](#how-tracing-works)
+- [Setup with Jaeger](#setup-with-jaeger)
+- [Spring Boot Configuration](#spring-boot-configuration)
+- [Trace Propagation](#trace-propagation)
+
+---
+
+## How Tracing Works
 
 ```
-Browser → Gateway (9080) → Auth Service (9081) → User Service (9082)
-                                ↓
-                         [trace spans collected]
-                                ↓
-                         OTLP Exporter → Jaeger / Tempo
+Browser Request
+      │
+      ▼
+┌─────────────────────────────────┐
+│ Gateway  traceId=abc123         │
+│         spanId=span-001         │
+└────────────────┬────────────────┘
+                 │  Passes B3 / W3C headers
+      ┌──────────┴───────────────────────┐
+      ▼                                  ▼
+┌──────────────┐                ┌──────────────┐
+│ user-service │                │ realm-service│
+│ spanId=002   │                │ spanId=003   │
+└──────────────┘                └──────────────┘
+      │                                  │
+      └──────────────┬───────────────────┘
+                     ▼
+         ┌───────────────────────┐
+         │  OTLP Collector       │
+         │  (Jaeger / Tempo)     │
+         └───────────────────────┘
 ```
 
-## Dependencies
+---
 
-```xml
-<!-- pom.xml (all services) -->
-<dependency>
-  <groupId>io.micrometer</groupId>
-  <artifactId>micrometer-tracing-bridge-otel</artifactId>
-</dependency>
-<dependency>
-  <groupId>io.opentelemetry</groupId>
-  <artifactId>opentelemetry-exporter-otlp</artifactId>
-</dependency>
-```
+## Setup with Jaeger
 
-## Configuration
-
-```yaml
-# application.yml
-management:
-  tracing:
-    sampling:
-      probability: 1.0   # 1.0 = 100% (use 0.1 in production)
-
-spring:
-  application:
-    name: opengate-auth-service
-
-otel:
-  exporter:
-    otlp:
-      endpoint: http://localhost:4318   # OTLP HTTP endpoint
-  resource:
-    attributes:
-      service.name: ${spring.application.name}
-      deployment.environment: production
-```
-
-## Run Jaeger (All-in-One)
-
-```bash
-docker run -d --name jaeger \
-  -p 16686:16686 \
-  -p 4317:4317 \
-  -p 4318:4318 \
-  jaegertracing/all-in-one:latest
-
-# Open Jaeger UI
-open http://localhost:16686
-```
-
-## Docker Compose — Add Jaeger
-
-```yaml
-services:
+<CodeBlock language="yaml" filename="docker-compose.tracing.yml" code={`services:
   jaeger:
-    image: jaegertracing/all-in-one:1.57
+    image: jaegertracing/all-in-one:1.55
     ports:
       - "16686:16686"   # Jaeger UI
       - "4317:4317"     # OTLP gRPC
       - "4318:4318"     # OTLP HTTP
     environment:
-      - COLLECTOR_OTLP_ENABLED=true
-```
+      COLLECTOR_OTLP_ENABLED: "true"`} />
 
-## Trace Context Propagation
+Open Jaeger UI at `http://localhost:16686`.
 
-OpenGate propagates trace context via HTTP headers:
+---
 
-```
-traceparent: 00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01
-tracestate: opengate=xxx
-```
+## Spring Boot Configuration
 
-All service-to-service calls (via RestTemplate or WebClient) automatically forward these headers.
+Add the OpenTelemetry Spring Boot starter to each service:
 
-## Grafana Tempo (Alternative to Jaeger)
+<CodeBlock language="kotlin" filename="build.gradle.kts" code={`dependencies {
+    implementation("io.micrometer:micrometer-tracing-bridge-otel")
+    implementation("io.opentelemetry.instrumentation:opentelemetry-spring-boot-starter")
+    implementation("io.opentelemetry:opentelemetry-exporter-otlp")
+}`} />
 
-```yaml
-# docker-compose.yml
-services:
-  tempo:
-    image: grafana/tempo:2.4.0
-    command: -config.file=/etc/tempo.yaml
-    volumes:
-      - ./monitoring/tempo.yaml:/etc/tempo.yaml
-    ports:
-      - "4317:4317"
-      - "4318:4318"
-      - "3200:3200"   # Tempo query API for Grafana
-```
+<CodeBlock language="yaml" filename="application.yml" code={`management:
+  tracing:
+    sampling:
+      probability: 1.0    # 1.0 = 100% in dev, use 0.1 in prod
 
-Then configure a Tempo data source in Grafana at `http://tempo:3200`.
+spring:
+  application:
+    name: opengate-user-service
 
-## Sample Trace Output
+otel:
+  exporter:
+    otlp:
+      endpoint: http://localhost:4318
+  service:
+    name: \${spring.application.name}
+  resource:
+    attributes:
+      deployment.environment: production`} />
 
-```
-Trace ID: 4bf92f3577b34da6a3ce929d0e0e4736
+---
 
-Spans:
-  [opengate-gateway]      POST /oauth2/token           12ms
-  [opengate-auth-service]   ├─ validateClient()         2ms
-  [opengate-auth-service]   ├─ authenticateUser()       5ms
-  [opengate-user-service]   │   └─ findByUsername()     3ms
-  [opengate-auth-service]   └─ issueTokens()            3ms
-```
+## Trace Propagation
+
+The gateway automatically propagates trace context using **W3C Trace Context** headers:
+
+| Header | Format |
+|---|---|
+| `traceparent` | `00-{traceId}-{spanId}-01` |
+| `tracestate` | Vendor-specific metadata |
+
+Logs automatically include `traceId` and `spanId` via MDC — correlate logs and traces in Grafana:
+
+<CodeBlock language="json" code={`{
+  "timestamp": "2025-06-01T10:00:00Z",
+  "level": "INFO",
+  "logger": "io.opengate.iam.user.service.UserService",
+  "message": "User created: alice@example.com",
+  "traceId": "abc123def456",
+  "spanId": "span001",
+  "userId": "usr_abc123",
+  "realmId": "master"
+}`} />
+
+<Callout variant="info" title="Sampling in production">
+  Use `sampling.probability: 0.1` (10%) in production to reduce overhead. Increase to `1.0` temporarily for debugging.
+</Callout>

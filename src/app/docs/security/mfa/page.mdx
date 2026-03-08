@@ -1,114 +1,131 @@
-export const metadata = { title: 'Multi-Factor Authentication (MFA)' };
+import { Callout } from '@/components/docs/Callout';
+import { CodeBlock } from '@/components/docs/CodeBlock';
 
-# Multi-Factor Authentication (MFA)
+export const metadata = { title: 'MFA Security — OpenGate IAM' };
 
-OpenGate IAM provides MFA via the dedicated **`opengate-mfa-service`** (`:9086`). It supports TOTP, Email OTP, SMS OTP, and backup codes.
+# Multi-Factor Authentication
 
-## Supported MFA Methods
+OpenGate IAM provides MFA via the dedicated **`opengate-mfa-service`** (port `8086`). It supports TOTP, Email OTP, and backup codes.
 
-| Method | Description | Recommended |
+## On this page
+
+- [Supported Methods](#supported-methods)
+- [MFA Login Flow](#mfa-login-flow)
+- [TOTP Enrollment](#totp-enrollment)
+- [Email OTP](#email-otp)
+- [Backup Codes](#backup-codes)
+- [Enforce MFA per Realm](#enforce-mfa-per-realm)
+
+---
+
+## Supported Methods
+
+| Method | Security Level | Description |
 |---|---|---|
-| **TOTP** | Time-based OTP — Google Authenticator, Authy | ✅ Yes |
-| **Email OTP** | 6-digit code sent to user's email | ✅ Yes |
-| **SMS OTP** | 6-digit code sent via SMS | ⚠️ Less secure |
-| **Backup Codes** | One-time recovery codes | ✅ Always enable |
+| **TOTP** | 🔒 High | Time-based OTP — Google Authenticator, Authy, 1Password |
+| **Email OTP** | 🔒 Medium | 6-digit code delivered to verified email |
+| **Backup Codes** | 🔒 Recovery | 10 one-time recovery codes — always generate these |
 
-## TOTP Setup Flow
+---
+
+## MFA Login Flow
+
+When `mfaRequired: true` is set on a realm:
 
 ```
-1. User enables MFA in account settings
-2. Server generates a TOTP secret (Base32)
-3. Server returns QR code URI  →  user scans with Authenticator app
-4. User submits a verification code to confirm enrollment
-5. MFA is now active on the account
+  Client                Auth Service              MFA Service
+    │                        │                         │
+    │ 1. POST credentials    │                         │
+    │───────────────────────►│                         │
+    │                        │ 2. Password valid       │
+    │ 3. { status:           │                         │
+    │      "MFA_REQUIRED",   │                         │
+    │      mfa_token }       │                         │
+    │◄───────────────────────│                         │
+    │                        │                         │
+    │ 4. POST /api/mfa/      │                         │
+    │    totp/verify         │                         │
+    │    { code, mfa_token } │────────────────────────►│
+    │                        │                         │ 5. Verify TOTP
+    │                        │◄────────────────────────│
+    │                        │ 6. Issue access_token   │
+    │◄───────────────────────│                         │
 ```
 
-## Enroll TOTP via API
+---
 
-```bash
-# Step 1 — Start TOTP enrollment
-POST /mfa/totp/enroll
-Authorization: Bearer <access_token>
+## TOTP Enrollment
 
-# Response
-{
+<CodeBlock language="bash" code={`# Step 1 — Initiate enrollment
+curl -X POST \\
+  -H "Authorization: Bearer $TOKEN" \\
+  http://localhost:8080/api/mfa/totp/enroll`} />
+
+**Response:**
+
+<CodeBlock language="json" code={`{
   "secret": "JBSWY3DPEHPK3PXP",
-  "qrCodeUri": "otpauth://totp/OpenGate:user@example.com?secret=JBSWY3DPEHPK3PXP&issuer=OpenGate",
-  "enrollmentId": "enroll-uuid"
-}
+  "qrCodeUri": "otpauth://totp/OpenGate:alice@example.com?secret=JBSWY3DPEHPK3PXP&issuer=OpenGate",
+  "enrollmentId": "enroll-uuid-123"
+}`} />
 
-# Step 2 — Confirm enrollment with a 6-digit code
-POST /mfa/totp/confirm
-Authorization: Bearer <access_token>
-Content-Type: application/json
+<CodeBlock language="bash" code={`# Step 2 — Confirm with first 6-digit code from authenticator app
+curl -X POST \\
+  -H "Authorization: Bearer $TOKEN" \\
+  -H "Content-Type: application/json" \\
+  -d '{ "enrollmentId": "enroll-uuid-123", "code": "123456" }' \\
+  http://localhost:8080/api/mfa/totp/confirm`} />
 
-{
-  "enrollmentId": "enroll-uuid",
-  "code": "123456"
-}
-```
+<Callout variant="info" title="TOTP implementation">
+  OpenGate uses a custom **HMAC-SHA1 RFC 6238** implementation with ±1 time-window tolerance (30-second windows). Compatible with Google Authenticator, Authy, and any RFC 6238-compliant app.
+</Callout>
+
+---
 
 ## Email OTP
 
-```bash
-# Trigger email OTP challenge
-POST /mfa/email/challenge
-Authorization: Bearer <access_token>
+<CodeBlock language="bash" code={`# Trigger email OTP (sends 6-digit code to verified email)
+curl -X POST \\
+  -H "Authorization: Bearer $TOKEN" \\
+  http://localhost:8080/api/mfa/email-otp/send
 
-# Verify the code
-POST /mfa/email/verify
-Authorization: Bearer <access_token>
-Content-Type: application/json
+# Verify the code (valid for 10 minutes)
+curl -X POST \\
+  -H "Authorization: Bearer $TOKEN" \\
+  -H "Content-Type: application/json" \\
+  -d '{ "code": "847291" }' \\
+  http://localhost:8080/api/mfa/email-otp/verify`} />
 
-{
-  "code": "847291"
-}
-```
+---
 
 ## Backup Codes
 
-```bash
-# Generate 10 one-time backup codes
-POST /mfa/backup-codes/generate
-Authorization: Bearer <access_token>
+<CodeBlock language="bash" code={`# Generate 10 one-time backup codes
+curl -X POST \\
+  -H "Authorization: Bearer $TOKEN" \\
+  http://localhost:8080/api/mfa/backup-codes/generate`} />
 
-# Response
-{
+<CodeBlock language="json" code={`{
   "codes": [
     "AAAA-BBBB", "CCCC-DDDD", "EEEE-FFFF",
     "GGGG-HHHH", "IIII-JJJJ", "KKKK-LLLL",
     "MMMM-NNNN", "OOOO-PPPP", "QQQQ-RRRR",
     "SSSS-TTTT"
   ]
-}
-```
+}`} />
 
-> Store backup codes securely. Each code can only be used **once**.
+<Callout variant="warning" title="Each backup code can only be used once">
+  Store backup codes in a password manager. Once all 10 are used you must regenerate. If lost, an admin can disable MFA for the account.
+</Callout>
 
-## MFA Enforcement per Realm
+---
 
-You can enforce MFA for all users in a realm via the Admin API:
+## Enforce MFA per Realm
 
-```bash
-PATCH /admin/realms/master
-Authorization: Bearer <admin_token>
-Content-Type: application/json
+<CodeBlock language="bash" code={`curl -X PUT \\
+  -H "Authorization: Bearer $ADMIN_TOKEN" \\
+  -H "Content-Type: application/json" \\
+  -d '{ "mfaRequired": true }' \\
+  http://localhost:8080/api/realms/my-realm`} />
 
-{
-  "mfaRequired": true,
-  "mfaMethods": ["TOTP", "EMAIL_OTP"]
-}
-```
-
-## MFA in the Login Flow
-
-When MFA is enabled, the auth flow adds a second step after password verification:
-
-```
-Login (username + password)
-  → Password verified ✅
-  → MFA challenge issued
-  → User submits OTP code
-  → MFA verified ✅
-  → Authorization code returned
-```
+When enabled, every user in the realm must complete MFA before receiving tokens.

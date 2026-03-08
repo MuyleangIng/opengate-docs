@@ -5,72 +5,133 @@ export const metadata = { title: 'Installation — OpenGate IAM' };
 
 # Installation
 
-## Local Development (Gradle)
+## On this page
 
-Build all modules from the root:
+- [Project Structure](#project-structure)
+- [Local Development](#local-development)
+- [Docker Build](#docker-build)
+- [Flyway Migrations](#flyway-migrations)
+- [Environment Variables](#environment-variables)
+
+---
+
+## Project Structure
+
+```
+opengate-iam/
+│
+├── opengate-common/                 ← Shared library (DTOs, exceptions, events)
+│   └── src/main/java/io/opengate/iam/common/
+│       ├── dto/          PageResponse.java
+│       ├── event/        DomainEvent.java
+│       └── exception/    GlobalExceptionHandler.java
+│
+├── opengate-gateway/                ← :8080  API Gateway
+├── opengate-auth-service/           ← :8081  OAuth2 / OIDC
+├── opengate-user-service/           ← :8082  User management
+├── opengate-realm-service/          ← :8083  Multi-tenancy
+├── opengate-rbac-service/           ← :8084  Roles & permissions
+├── opengate-client-service/         ← :8085  OAuth clients
+├── opengate-mfa-service/            ← :8086  MFA (TOTP, OTP)
+├── opengate-session-service/        ← :8087  Sessions
+├── opengate-notification-service/   ← :8088  Email
+├── opengate-admin-api/              ← :8089  Admin REST API
+│
+├── opengate-console/                ← Next.js 14 Admin UI  :3000
+├── opengate-docs/                   ← Next.js 14 Docs      :3001
+│
+├── docker/
+│   ├── docker-compose.infra.yml     ← PostgreSQL · Redis · Kafka · Vault
+│   ├── docker-compose.services.yml  ← All microservices
+│   └── init-databases.sh            ← Creates all PostgreSQL databases
+│
+├── build.gradle.kts                 ← Root Gradle build
+├── settings.gradle.kts              ← Module declarations
+└── gradle/libs.versions.toml        ← Version catalog
+```
+
+---
+
+## Local Development
+
+### Build everything
 
 <CodeBlock language="bash" code={`./gradlew build`} />
 
-Run a single service:
+### Run a single service
 
-<CodeBlock language="bash" code={`./gradlew :opengate-auth-service:bootRun`} />
+<CodeBlock language="bash" code={`# Auth service on port 8081
+./gradlew :opengate-auth-service:bootRun
+
+# User service on port 8082
+./gradlew :opengate-user-service:bootRun`} />
+
+<Callout variant="info" title="Infrastructure required">
+  Ensure PostgreSQL, Redis, and Kafka are running before starting services. Use `docker compose -f docker/docker-compose.infra.yml up -d`.
+</Callout>
+
+### Run tests
+
+<CodeBlock language="bash" code={`# All tests
+./gradlew test
+
+# Single module
+./gradlew :opengate-user-service:test`} />
+
+---
 
 ## Docker Build
 
-Build all service images:
+<CodeBlock language="bash" code={`# Build all service images
+docker compose -f docker/docker-compose.services.yml build
 
-<CodeBlock language="bash" code={`docker compose -f docker/docker-compose.services.yml build`} />
+# Build a single service image
+docker compose -f docker/docker-compose.services.yml build opengate-auth-service
 
-## Module Structure
+# Build with no cache (force clean build)
+docker compose -f docker/docker-compose.services.yml build --no-cache`} />
 
-```
-opengate/
-├── opengate-common/          # Shared library (exceptions, DTOs, events)
-├── opengate-gateway/         # Port 8080 — API Gateway
-├── opengate-auth-service/    # Port 8081 — OAuth2/OIDC
-├── opengate-user-service/    # Port 8082 — User management
-├── opengate-realm-service/   # Port 8083 — Multi-tenancy
-├── opengate-rbac-service/    # Port 8084 — Roles & permissions
-├── opengate-client-service/  # Port 8085 — OAuth clients
-├── opengate-mfa-service/     # Port 8086 — MFA (TOTP, OTP)
-├── opengate-session-service/ # Port 8087 — Session management
-├── opengate-notification-service/ # Port 8088 — Email notifications
-├── opengate-admin-api/       # Port 8089 — Admin REST API
-├── opengate-console/         # Next.js 14 Admin UI (port 3000)
-├── opengate-docs/            # Next.js 14 Documentation (port 3001)
-└── docker/                   # Docker Compose files
-```
+---
 
 ## Flyway Migrations
 
-Each service manages its own database schema via Flyway. Migrations run automatically on startup. Migration files are located at:
+Each service manages its own schema. Migration files live at:
 
-<CodeBlock language="text" code={`src/main/resources/db/migration/V1__create_<table>.sql`} />
+<CodeBlock language="text" code={`src/main/resources/db/migration/
+├── V1__create_users.sql
+├── V2__add_user_status.sql
+└── V3__add_mfa_secret.sql`} />
 
-<Callout variant="warning" title="Schema validation">
-Services use `spring.jpa.hibernate.ddl-auto: validate`. The schema must match exactly — Flyway migrations must run before the application starts.
+Migrations run automatically on startup. To run manually:
+
+<CodeBlock language="bash" code={`./gradlew :opengate-user-service:flywayMigrate`} />
+
+<Callout variant="warning" title="ddl-auto: validate">
+  All services use `spring.jpa.hibernate.ddl-auto: validate`. Flyway migrations **must** run before the application starts, or the service will fail to boot.
 </Callout>
+
+---
 
 ## Environment Variables
 
-Key environment variables for each service:
-
-<CodeBlock language="bash" filename=".env" code={`# Database
+<CodeBlock language="bash" filename=".env" code={`# ── Database ──────────────────────────────────────
 POSTGRES_HOST=localhost
 POSTGRES_PORT=5432
+POSTGRES_USER=opengate
 POSTGRES_PASSWORD=opengate
 
-# Redis
+# ── Redis ─────────────────────────────────────────
 REDIS_HOST=localhost
 REDIS_PORT=6379
+REDIS_PASSWORD=
 
-# Kafka
+# ── Kafka ─────────────────────────────────────────
 KAFKA_BOOTSTRAP_SERVERS=localhost:9092
 
-# JWT
+# ── JWT / Auth ────────────────────────────────────
 JWT_ISSUER_URI=http://localhost:8080/realms/master
 
-# SMTP (notification-service)
+# ── SMTP (notification-service) ───────────────────
 SMTP_HOST=smtp.gmail.com
 SMTP_PORT=587
 SMTP_USERNAME=your@email.com

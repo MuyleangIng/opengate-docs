@@ -1,119 +1,128 @@
-export const metadata = { title: 'Health Checks' };
+import { Callout } from '@/components/docs/Callout';
+import { CodeBlock } from '@/components/docs/CodeBlock';
+
+export const metadata = { title: 'Health Checks — OpenGate IAM' };
 
 # Health Checks
 
-All OpenGate IAM microservices expose health check endpoints via **Spring Boot Actuator**. Use these for load balancers, Kubernetes liveness/readiness probes, and uptime monitoring.
+All OpenGate IAM microservices expose health endpoints via **Spring Boot Actuator**. Use them for load balancers, Kubernetes probes, and uptime monitoring.
+
+## On this page
+
+- [Endpoints](#endpoints)
+- [Check All Services](#check-all-services)
+- [Kubernetes Probes](#kubernetes-probes)
+- [Docker Compose Health Check](#docker-compose-health-check)
+- [Actuator Configuration](#actuator-configuration)
+
+---
 
 ## Endpoints
 
-Every service exposes:
+Every service exposes these endpoints on the main port:
 
 | Endpoint | Description |
 |---|---|
-| `GET /actuator/health` | Aggregated health status |
+| `GET /actuator/health` | Aggregated health — all dependencies |
 | `GET /actuator/health/liveness` | Kubernetes liveness probe |
 | `GET /actuator/health/readiness` | Kubernetes readiness probe |
-| `GET /actuator/info` | Application version and metadata |
+| `GET /actuator/info` | App version and build metadata |
+| `GET /actuator/prometheus` | Prometheus-format metrics |
 
-## Example Response
+**Example response:**
 
-```bash
-GET http://localhost:9081/actuator/health
-
-{
+<CodeBlock language="json" code={`{
   "status": "UP",
   "components": {
-    "db": { "status": "UP", "details": { "database": "PostgreSQL", "validationQuery": "isValid()" } },
+    "db": {
+      "status": "UP",
+      "details": { "database": "PostgreSQL", "validationQuery": "isValid()" }
+    },
     "redis": { "status": "UP" },
     "kafka": { "status": "UP" },
-    "diskSpace": { "status": "UP" }
+    "diskSpace": { "status": "UP", "details": { "free": "45GB" } }
   }
-}
-```
+}`} />
+
+---
 
 ## Check All Services
 
-```bash
-# Gateway
-curl http://localhost:9080/actuator/health
+<CodeBlock language="bash" code={`for port in 8080 8081 8082 8083 8084 8085 8086 8087 8088 8089; do
+  status=$(curl -sf http://localhost:$port/actuator/health 2>/dev/null | python3 -c "import sys,json; print(json.load(sys.stdin)['status'])" 2>/dev/null || echo "DOWN")
+  printf "%-30s → %s\\n" "http://localhost:$port" "$status"
+done`} />
 
-# Auth Service
-curl http://localhost:9081/actuator/health
+| Service | Port | Health URL |
+|---|---|---|
+| opengate-gateway | 8080 | `http://localhost:8080/actuator/health` |
+| opengate-auth-service | 8081 | `http://localhost:8081/actuator/health` |
+| opengate-user-service | 8082 | `http://localhost:8082/actuator/health` |
+| opengate-realm-service | 8083 | `http://localhost:8083/actuator/health` |
+| opengate-rbac-service | 8084 | `http://localhost:8084/actuator/health` |
+| opengate-client-service | 8085 | `http://localhost:8085/actuator/health` |
+| opengate-mfa-service | 8086 | `http://localhost:8086/actuator/health` |
+| opengate-session-service | 8087 | `http://localhost:8087/actuator/health` |
+| opengate-notification-service | 8088 | `http://localhost:8088/actuator/health` |
+| opengate-admin-api | 8089 | `http://localhost:8089/actuator/health` |
 
-# User Service
-curl http://localhost:9082/actuator/health
-
-# Realm Service
-curl http://localhost:9083/actuator/health
-
-# RBAC Service
-curl http://localhost:9084/actuator/health
-
-# Client Service
-curl http://localhost:9085/actuator/health
-
-# MFA Service
-curl http://localhost:9086/actuator/health
-
-# Session Service
-curl http://localhost:9087/actuator/health
-
-# Admin API
-curl http://localhost:9089/actuator/health
-```
+---
 
 ## Kubernetes Probes
 
-```yaml
-# In your Kubernetes Deployment
-livenessProbe:
-  httpGet:
-    path: /actuator/health/liveness
-    port: 8080
-  initialDelaySeconds: 30
-  periodSeconds: 10
-  failureThreshold: 3
+<CodeBlock language="yaml" filename="k8s/user-service.yaml" code={`spec:
+  containers:
+    - name: user-service
+      image: opengate/user-service:latest
+      livenessProbe:
+        httpGet:
+          path: /actuator/health/liveness
+          port: 8082
+        initialDelaySeconds: 60
+        periodSeconds: 30
+        failureThreshold: 3
+      readinessProbe:
+        httpGet:
+          path: /actuator/health/readiness
+          port: 8082
+        initialDelaySeconds: 30
+        periodSeconds: 10
+        failureThreshold: 3`} />
 
-readinessProbe:
-  httpGet:
-    path: /actuator/health/readiness
-    port: 8080
-  initialDelaySeconds: 20
-  periodSeconds: 5
-  failureThreshold: 3
-```
+---
+
+## Docker Compose Health Check
+
+<CodeBlock language="yaml" filename="docker-compose.services.yml (excerpt)" code={`services:
+  opengate-user-service:
+    image: opengate/user-service:latest
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8082/actuator/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 45s`} />
+
+---
 
 ## Actuator Configuration
 
-```yaml
-# application.yml
-management:
+<CodeBlock language="yaml" filename="application.yml" code={`management:
   endpoints:
     web:
       exposure:
         include: health,info,metrics,prometheus
   endpoint:
     health:
-      show-details: always
+      show-details: when-authorized   # always | never | when-authorized
       probes:
         enabled: true
   health:
     livenessState:
       enabled: true
     readinessState:
-      enabled: true
-```
+      enabled: true`} />
 
-## Docker Compose Health Check
-
-```yaml
-services:
-  opengate-auth-service:
-    image: opengate/auth-service:1.0.0
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/actuator/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 40s
-```
+<Callout variant="danger" title="Restrict actuator in production">
+  Never expose `env`, `beans`, `heapdump`, or `threaddump` publicly — they reveal sensitive runtime information. Restrict them to an internal management port (`management.server.port: 9090`).
+</Callout>

@@ -1,77 +1,122 @@
-export const metadata = { title: 'RBAC & Roles' };
+import { Callout } from '@/components/docs/Callout';
+import { CodeBlock } from '@/components/docs/CodeBlock';
+
+export const metadata = { title: 'RBAC & Roles — OpenGate IAM' };
 
 # RBAC & Roles
 
-OpenGate IAM implements **Role-Based Access Control (RBAC)** via the **`opengate-rbac-service`** (`:9084`). Roles are scoped per realm and are embedded in JWT access tokens.
+OpenGate IAM implements **Role-Based Access Control (RBAC)** via `opengate-rbac-service` (port `8084`). Roles are scoped per realm and embedded in JWT access tokens.
+
+## On this page
+
+- [Concepts](#concepts)
+- [Role Hierarchy](#role-hierarchy)
+- [Creating Roles](#creating-roles)
+- [Assigning Roles to Users](#assigning-roles-to-users)
+- [Composite Roles](#composite-roles)
+- [Groups](#groups)
+- [Enforcing Roles in Spring Boot](#enforcing-roles-in-spring-boot)
+
+---
 
 ## Concepts
 
 | Concept | Description |
 |---|---|
-| **Role** | A named permission (e.g. `ROLE_ADMIN`, `ROLE_USER`) |
+| **Realm Role** | A named permission scoped to a realm (e.g. `ROLE_ADMIN`) |
 | **Composite Role** | A role that inherits permissions from other roles |
 | **Group** | A collection of users that share roles |
-| **Realm Role** | A role defined at the realm level, available to all clients |
-| **Client Role** | A role scoped to a specific OAuth2 client |
+| **User-Role Mapping** | Associates a user with one or more roles |
 
-## Creating a Role
+---
 
-```bash
-POST /admin/realms/master/roles
-Authorization: Bearer <admin_token>
-Content-Type: application/json
+## Role Hierarchy
 
-{
-  "name": "ROLE_EDITOR",
-  "description": "Can create and edit content",
-  "composite": false
-}
 ```
+┌─────────────────────────────────────────────┐
+│               Realm: acme-corp              │
+│                                             │
+│  ROLE_ADMIN (composite)                     │
+│    ├── ROLE_MANAGER (composite)             │
+│    │     ├── ROLE_EDITOR                   │
+│    │     └── ROLE_VIEWER                   │
+│    └── ROLE_DEVELOPER                       │
+│                                             │
+│  ROLE_BILLING                               │
+│  ROLE_READ_ONLY                             │
+└─────────────────────────────────────────────┘
+```
+
+---
+
+## Creating Roles
+
+<CodeBlock language="bash" code={`curl -X POST \\
+  -H "Authorization: Bearer $ADMIN_TOKEN" \\
+  -H "Content-Type: application/json" \\
+  -d '{ "name": "ROLE_EDITOR", "description": "Can create and edit content" }' \\
+  http://localhost:8080/api/rbac/roles?realm=acme-corp`} />
+
+---
+
+## Assigning Roles to Users
+
+<CodeBlock language="bash" code={`curl -X POST \\
+  -H "Authorization: Bearer $ADMIN_TOKEN" \\
+  -H "Content-Type: application/json" \\
+  -d '{ "userId": "usr_abc123", "roleIds": ["role-uuid-1", "role-uuid-2"] }' \\
+  http://localhost:8080/api/rbac/user-role-mappings`} />
+
+Roles are automatically embedded in the user's JWT on next login:
+
+<CodeBlock language="json" code={`{
+  "sub": "usr_abc123",
+  "realm": "acme-corp",
+  "roles": ["ROLE_EDITOR", "ROLE_VIEWER"],
+  "email": "alice@acme.com"
+}`} />
+
+---
 
 ## Composite Roles
 
 A composite role automatically grants all roles it contains.
 
-```bash
-# Create composite role
-POST /admin/realms/master/roles
-{
-  "name": "ROLE_MANAGER",
-  "description": "Manager — inherits editor + viewer",
-  "composite": true,
-  "compositeRoles": ["ROLE_EDITOR", "ROLE_VIEWER"]
-}
-```
+<CodeBlock language="bash" code={`curl -X POST \\
+  -H "Authorization: Bearer $ADMIN_TOKEN" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "name": "ROLE_MANAGER",
+    "description": "Inherits editor and viewer permissions",
+    "composite": true
+  }' \\
+  http://localhost:8080/api/rbac/roles?realm=acme-corp`} />
 
-## Assigning Roles to Users
+---
 
-```bash
-POST /admin/realms/master/users/{userId}/roles
-Authorization: Bearer <admin_token>
-Content-Type: application/json
+## Groups
 
-{
-  "roles": ["ROLE_EDITOR", "ROLE_VIEWER"]
-}
-```
+Groups let you assign roles to many users at once.
 
-## Roles in JWT Tokens
+<CodeBlock language="bash" code={`# Create a group
+curl -X POST \\
+  -H "Authorization: Bearer $ADMIN_TOKEN" \\
+  -H "Content-Type: application/json" \\
+  -d '{ "name": "editors-team", "realmName": "acme-corp" }' \\
+  http://localhost:8080/api/rbac/groups
 
-Roles are automatically included in the `roles` claim of every access token:
+# Add user to group
+curl -X POST \\
+  -H "Authorization: Bearer $ADMIN_TOKEN" \\
+  -H "Content-Type: application/json" \\
+  -d '{ "userId": "usr_abc123" }' \\
+  "http://localhost:8080/api/rbac/groups/{groupId}/members"`} />
 
-```json
-{
-  "sub": "user-uuid",
-  "realm": "master",
-  "roles": ["ROLE_USER", "ROLE_EDITOR"],
-  "scope": "openid profile"
-}
-```
+---
 
 ## Enforcing Roles in Spring Boot
 
-```java
-@RestController
+<CodeBlock language="java" filename="ContentController.java" code={`@RestController
 @RequestMapping("/api/content")
 public class ContentController {
 
@@ -86,48 +131,14 @@ public class ContentController {
   @DeleteMapping("/{id}")
   @PreAuthorize("hasRole('ROLE_ADMIN')")
   public void delete(@PathVariable String id) { ... }
-}
-```
+}`} />
 
-Enable method security:
+Enable method-level security in your config:
 
-```java
-@Configuration
-@EnableMethodSecurity
-public class SecurityConfig { }
-```
+<CodeBlock language="java" filename="SecurityConfig.java" code={`@Configuration
+@EnableMethodSecurity   // enables @PreAuthorize, @PostAuthorize
+public class SecurityConfig { }`} />
 
-## Groups
-
-Groups let you assign roles to many users at once.
-
-```bash
-# Create a group
-POST /admin/realms/master/groups
-{
-  "name": "editors-team",
-  "roles": ["ROLE_EDITOR"]
-}
-
-# Add user to group
-POST /admin/realms/master/groups/{groupId}/members
-{
-  "userId": "user-uuid"
-}
-```
-
-All users in `editors-team` automatically inherit `ROLE_EDITOR`.
-
-## Listing Roles
-
-```bash
-GET /admin/realms/master/roles
-Authorization: Bearer <admin_token>
-
-# Response
-[
-  { "id": "uuid", "name": "ROLE_ADMIN", "composite": false },
-  { "id": "uuid", "name": "ROLE_USER",  "composite": false },
-  { "id": "uuid", "name": "ROLE_MANAGER", "composite": true }
-]
-```
+<Callout variant="info" title="Role claim extraction">
+  Spring Security expects roles in the `roles` JWT claim by default. If your JWT uses a different claim name, configure a custom `JwtAuthenticationConverter`.
+</Callout>

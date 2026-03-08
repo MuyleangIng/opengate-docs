@@ -1,47 +1,81 @@
 import { Callout } from '@/components/docs/Callout';
 import { CodeBlock } from '@/components/docs/CodeBlock';
 
-export const metadata = { title: 'API — Authentication' };
+export const metadata = { title: 'API Reference — OpenGate IAM' };
 
 # API Reference
 
-All API calls go through the gateway at `http://localhost:8080`.
+All API requests go through the **API Gateway** at `http://localhost:8080`.
 
-<Callout variant="info" title="Base URL">
-`http://localhost:8080` for local development. All services are routed through the gateway.
-</Callout>
+## On this page
+
+- [Base URL & Headers](#base-url--headers)
+- [Authentication Endpoints](#authentication-endpoints)
+- [Token Operations](#token-operations)
+- [Error Reference](#error-reference)
+
+---
+
+## Base URL & Headers
+
+| Environment | Base URL |
+|---|---|
+| Local development | `http://localhost:8080` |
+| Production | `https://iam.yourdomain.com` |
+
+**Required headers for protected endpoints:**
+
+```
+Authorization: Bearer <access_token>
+Content-Type: application/json
+Accept: application/json
+```
+
+---
 
 ## Authentication Endpoints
 
-### Get OIDC Discovery Document
+### OIDC Discovery Document
 
 ```
 GET /realms/{realm}/.well-known/openid-configuration
 ```
 
-**Example:**
-<CodeBlock language="bash" code={`curl http://localhost:8080/realms/master/.well-known/openid-configuration`} />
+<CodeBlock language="bash" code={`curl http://localhost:8080/realms/master/.well-known/openid-configuration | jq .`} />
 
-### Obtain Token (Password Grant)
+### Authorization Endpoint (Authorization Code + PKCE)
 
-<Callout variant="warning" title="Deprecated">
-The Resource Owner Password Credentials grant is deprecated in OAuth 2.1. Use Authorization Code + PKCE instead.
-</Callout>
+```
+GET /realms/{realm}/protocol/openid-connect/auth
+    ?client_id=<id>
+    &redirect_uri=<uri>
+    &response_type=code
+    &code_challenge=<S256_challenge>
+    &code_challenge_method=S256
+    &scope=openid+profile+email
+```
 
-### Obtain Token (Client Credentials)
+### Token Endpoint
 
 ```
 POST /realms/{realm}/protocol/openid-connect/token
 Content-Type: application/x-www-form-urlencoded
 ```
 
-| Parameter | Value |
-|-----------|-------|
-| `grant_type` | `client_credentials` |
-| `client_id` | Your client ID |
-| `client_secret` | Your client secret |
+---
+
+## Token Operations
+
+### Client Credentials
+
+<CodeBlock language="bash" code={`curl -X POST http://localhost:8080/realms/master/protocol/openid-connect/token \\
+  -H "Content-Type: application/x-www-form-urlencoded" \\
+  -d "grant_type=client_credentials" \\
+  -d "client_id=my-service" \\
+  -d "client_secret=<secret>"`} />
 
 **Response:**
+
 <CodeBlock language="json" code={`{
   "access_token": "eyJhbGci...",
   "token_type": "Bearer",
@@ -49,42 +83,51 @@ Content-Type: application/x-www-form-urlencoded
   "scope": "openid profile email"
 }`} />
 
+### Exchange Code for Tokens
+
+<CodeBlock language="bash" code={`curl -X POST http://localhost:8080/realms/master/protocol/openid-connect/token \\
+  -d "grant_type=authorization_code" \\
+  -d "code=<auth_code>" \\
+  -d "redirect_uri=http://localhost:3000/callback" \\
+  -d "code_verifier=<pkce_verifier>" \\
+  -d "client_id=opengate-console"`} />
+
 ### Refresh Token
 
-```
-POST /realms/{realm}/protocol/openid-connect/token
-```
+<CodeBlock language="bash" code={`curl -X POST http://localhost:8080/realms/master/protocol/openid-connect/token \\
+  -d "grant_type=refresh_token" \\
+  -d "refresh_token=<refresh_token>" \\
+  -d "client_id=opengate-console"`} />
 
-| Parameter | Value |
-|-----------|-------|
-| `grant_type` | `refresh_token` |
-| `refresh_token` | Your refresh token |
-| `client_id` | Your client ID |
+### Introspect Token
 
-## Common Headers
+<CodeBlock language="bash" code={`curl -X POST http://localhost:8080/realms/master/protocol/openid-connect/token/introspect \\
+  -d "token=<access_token>" \\
+  -d "client_id=my-service" \\
+  -d "client_secret=<secret>"`} />
 
-All protected endpoints require:
+---
 
-```
-Authorization: Bearer <access_token>
-Content-Type: application/json
-```
+## Error Reference
 
-## Error Responses
-
-<CodeBlock language="json" code={`{
-  "timestamp": "2024-01-15T10:00:00Z",
+<CodeBlock language="json" filename="Error Response Format" code={`{
+  "timestamp": "2025-06-01T10:00:00Z",
   "status": 404,
   "error": "Not Found",
   "message": "REALM_NOT_FOUND",
-  "path": "/api/realms/unknown"
+  "path": "/api/realms/unknown-realm"
 }`} />
 
-| Status | Meaning |
-|--------|---------|
-| `400` | Validation error — check request body |
-| `401` | Missing or invalid JWT |
-| `403` | Insufficient permissions |
-| `404` | Resource not found |
-| `409` | Conflict — resource already exists |
-| `500` | Internal server error |
+| HTTP Status | Meaning | Common Cause |
+|---|---|---|
+| `400 Bad Request` | Validation failed | Missing required field, invalid format |
+| `401 Unauthorized` | Missing or invalid JWT | Token expired, wrong issuer |
+| `403 Forbidden` | Insufficient permissions | Wrong realm, missing role |
+| `404 Not Found` | Resource missing | Wrong ID, deleted resource |
+| `409 Conflict` | Already exists | Duplicate username/email/client_id |
+| `422 Unprocessable` | Business rule violation | Weak password, disabled user |
+| `500 Internal Error` | Server error | Check service logs |
+
+<Callout variant="info" title="Rate limiting">
+  The gateway applies rate limiting per IP. Default: 30 requests/minute. Exceeding the limit returns `429 Too Many Requests`.
+</Callout>

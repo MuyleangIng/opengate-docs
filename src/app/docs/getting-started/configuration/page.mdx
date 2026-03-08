@@ -5,20 +5,30 @@ export const metadata = { title: 'Configuration — OpenGate IAM' };
 
 # Configuration
 
+## On this page
+
+- [Realm Settings](#realm-settings)
+- [Gateway Configuration](#gateway-configuration)
+- [Auth Server & JWT Keys](#auth-server--jwt-keys)
+- [Password Policy](#password-policy)
+- [SMTP Settings](#smtp-settings)
+
+---
+
 ## Realm Settings
 
-Realms are the top-level tenants in OpenGate. Each realm has isolated users, clients, and roles.
-
-The `master` realm is seeded automatically on first startup. Create additional realms via the Admin Console or REST API.
-
-Key realm settings:
+Realms are the top-level tenants in OpenGate. Each realm has isolated users, clients, and roles. The `master` realm is seeded automatically on first startup.
 
 | Setting | Default | Description |
-|---------|---------|-------------|
+|---|---|---|
 | `tokenLifespanSeconds` | `300` | Access token TTL (5 minutes) |
 | `refreshTokenLifespanSeconds` | `2592000` | Refresh token TTL (30 days) |
-| `mfaRequired` | `false` | Force MFA for all users |
-| `loginTheme` | `default` | UI theme for login page |
+| `mfaRequired` | `false` | Force MFA for all logins |
+| `loginTheme` | `default` | UI theme for the login page |
+| `passwordPolicy` | `null` | JSON password constraints |
+| `smtpSettings` | `null` | JSON SMTP configuration |
+
+---
 
 ## Gateway Configuration
 
@@ -29,57 +39,86 @@ Key realm settings:
         corsConfigurations:
           '[/**]':
             allowedOrigins:
-              - "http://localhost:3000"
-              - "http://localhost:3001"
-            allowedMethods: ["GET","POST","PUT","DELETE","OPTIONS"]
+              - "http://localhost:3000"   # Admin Console
+              - "http://localhost:3001"   # Docs
+            allowedMethods: [GET, POST, PUT, DELETE, OPTIONS]
             allowedHeaders: ["*"]
             allowCredentials: true
       routes:
         - id: auth
           uri: http://localhost:8081
-          predicates: [Path=/api/auth/**,/realms/**]
+          predicates: [Path=/api/auth/**, /realms/**]
         - id: users
           uri: http://localhost:8082
-          predicates: [Path=/api/users/**]`} />
+          predicates: [Path=/api/users/**]
+        - id: realms
+          uri: http://localhost:8083
+          predicates: [Path=/api/realms/**]
+        - id: rbac
+          uri: http://localhost:8084
+          predicates: [Path=/api/rbac/**]
+        - id: clients
+          uri: http://localhost:8085
+          predicates: [Path=/api/clients/**]
+        - id: mfa
+          uri: http://localhost:8086
+          predicates: [Path=/api/mfa/**]
+        - id: sessions
+          uri: http://localhost:8087
+          predicates: [Path=/api/sessions/**]
+        - id: admin
+          uri: http://localhost:8089
+          predicates: [Path=/admin/**]`} />
 
-## Auth Server (JWT Keys)
+---
 
-By default, a 2048-bit RSA key pair is generated in memory on startup. For production, store keys in HashiCorp Vault:
+## Auth Server & JWT Keys
 
-<CodeBlock language="yaml" code={`vault:
-  uri: http://localhost:8200
-  token: root
+By default, a 2048-bit RSA key pair is generated **in memory** on startup.
+
+<Callout variant="warning" title="In-memory keys invalidate JWTs on restart">
+  In-memory RSA keys are regenerated on every restart, invalidating all existing JWTs. Use HashiCorp Vault or a keystore file in production.
+</Callout>
+
+<CodeBlock language="yaml" filename="application.yml (auth-service, production)" code={`vault:
+  uri: \${VAULT_URI:http://localhost:8200}
+  token: \${VAULT_TOKEN:root}
   kv:
     enabled: true
     backend: secret
     default-context: opengate/jwt-keys`} />
 
-<Callout variant="warning" title="In-memory keys">
-In-memory RSA keys are regenerated on every restart, invalidating all existing JWTs. Always use Vault or a keystore in production.
-</Callout>
+---
 
 ## Password Policy
 
-Configure per-realm via `passwordPolicy` (JSON):
+Configure per-realm via `passwordPolicy` (JSONB column):
 
 <CodeBlock language="json" code={`{
   "minLength": 8,
   "requireUppercase": true,
   "requireNumbers": true,
   "requireSpecial": false,
-  "maxAge": 90
+  "maxAgeDays": 90,
+  "historyCount": 5
 }`} />
+
+---
 
 ## SMTP Settings
 
-Configure per-realm via `smtpSettings` (JSON):
+Configure per-realm via `smtpSettings` (JSONB column):
 
 <CodeBlock language="json" code={`{
   "host": "smtp.gmail.com",
   "port": 587,
   "username": "noreply@yourcompany.com",
-  "password": "app-password",
+  "password": "app-specific-password",
   "fromName": "OpenGate IAM",
   "ssl": false,
   "starttls": true
 }`} />
+
+<Callout variant="info" title="Per-realm SMTP">
+  Each realm can have its own SMTP configuration, allowing different branding and sender addresses per tenant.
+</Callout>

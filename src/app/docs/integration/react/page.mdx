@@ -5,257 +5,151 @@ export const metadata = { title: 'React / Next.js Integration — OpenGate IAM' 
 
 # React / Next.js Integration
 
-Integrate OpenGate IAM into a React or Next.js app using **OAuth 2.1 Authorization Code + PKCE** — the same flow used by Keycloak's JavaScript adapter, but with zero external dependencies.
+## On this page
 
-<Callout variant="success" title="Working example">
-The complete code below runs live at **http://localhost:3003**. Clone and run it:
-```bash
-cd opengate-sample-frontend
-npm install
-npm run dev -- --port 3003
-```
-</Callout>
+- [Install Dependencies](#install-dependencies)
+- [Next.js with next-auth](#nextjs-with-next-auth)
+- [React SPA (PKCE)](#react-spa-pkce)
+- [Protecting Routes](#protecting-routes)
+- [Calling the API](#calling-the-api)
 
 ---
 
-## Step 1 — Configure your client
+## Install Dependencies
 
-Make sure your app is registered in OpenGate with:
-- Grant type: `authorization_code`
-- PKCE: enabled (`requireProofKey: true`)
-- Redirect URI: your callback URL (e.g. `http://localhost:3003/callback`)
+<CodeBlock language="bash" code={`# Next.js (recommended)
+npm install next-auth
 
-```yaml
-# In AuthorizationServerConfig.java
-RegisteredClient.withId(UUID.randomUUID().toString())
-  .clientId("my-app")
-  .clientAuthenticationMethod(ClientAuthenticationMethod.NONE)   # public client
-  .authorizationGrantType(AuthorizationGrantType.AUTHORIZATION_CODE)
-  .redirectUri("http://localhost:3003/callback")
-  .scope(OidcScopes.OPENID).scope(OidcScopes.PROFILE)
-  .clientSettings(ClientSettings.builder().requireProofKey(true).build())
-  .build()
-```
+# React SPA
+npm install oidc-client-ts react-oidc-context`} />
 
 ---
 
-## Step 2 — PKCE helper (`src/lib/pkce.ts`)
+## Next.js with next-auth
 
-```typescript
-/** Generate a cryptographically random code_verifier (RFC 7636) */
-export function generateCodeVerifier(): string {
-  const array = new Uint8Array(64);
-  crypto.getRandomValues(array);
-  return base64urlEncode(array);
-}
+<CodeBlock language="typescript" filename="app/api/auth/[...nextauth]/route.ts" code={`import NextAuth from 'next-auth';
 
-/** SHA-256 hash of verifier → code_challenge */
-export async function generateCodeChallenge(verifier: string): Promise<string> {
-  const data   = new TextEncoder().encode(verifier);
-  const digest = await crypto.subtle.digest('SHA-256', data);
-  return base64urlEncode(new Uint8Array(digest));
-}
-
-function base64urlEncode(buf: Uint8Array): string {
-  return btoa(String.fromCharCode(...buf))
-    .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-}
-
-export function generateState(): string {
-  const array = new Uint8Array(16);
-  crypto.getRandomValues(array);
-  return base64urlEncode(array);
-}
-```
-
----
-
-## Step 3 — Login button (redirect to OpenGate)
-
-```typescript
-import { generateCodeVerifier, generateCodeChallenge, generateState } from '@/lib/pkce';
-
-const OPENGATE_URL = 'http://localhost:9081';
-const CLIENT_ID    = 'my-app';
-
-async function loginWithOpenGate() {
-  // Generate PKCE pair
-  const verifier  = generateCodeVerifier();
-  const challenge = await generateCodeChallenge(verifier);
-  const state     = generateState();
-
-  // Persist verifier for the callback step
-  sessionStorage.setItem('pkce_verifier', verifier);
-  sessionStorage.setItem('oauth_state',   state);
-
-  // Build authorization URL
-  const params = new URLSearchParams({
-    response_type:         'code',
-    client_id:             CLIENT_ID,
-    redirect_uri:          'http://localhost:3003/callback',
-    scope:                 'openid profile email',
-    state,
-    code_challenge:        challenge,
-    code_challenge_method: 'S256',
-  });
-
-  // Redirect the browser → OpenGate shows its login form
-  window.location.href = `${OPENGATE_URL}/oauth2/authorize?${params}`;
-}
-```
-
-The user sees OpenGate's login page. After successful login, OpenGate redirects back to your `redirect_uri` with `?code=...&state=...`.
-
----
-
-## Step 4 — Callback page (exchange code for token)
-
-Create `src/app/callback/page.tsx`:
-
-```typescript
-'use client';
-import { useEffect } from 'react';
-import { useSearchParams, useRouter } from 'next/navigation';
-
-const OPENGATE_URL = 'http://localhost:9081';
-const CLIENT_ID    = 'my-app';
-
-export default function CallbackPage() {
-  const searchParams = useSearchParams();
-  const router       = useRouter();
-
-  useEffect(() => {
-    const code  = searchParams.get('code');
-    const state = searchParams.get('state');
-
-    // 1. Validate state (CSRF protection)
-    if (state !== sessionStorage.getItem('oauth_state')) {
-      alert('State mismatch — possible CSRF');
-      return;
-    }
-
-    // 2. Retrieve the PKCE verifier
-    const verifier = sessionStorage.getItem('pkce_verifier')!;
-
-    // 3. Exchange code + verifier for tokens
-    fetch(`${OPENGATE_URL}/oauth2/token`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({
-        grant_type:    'authorization_code',
-        client_id:     CLIENT_ID,
-        redirect_uri:  'http://localhost:3003/callback',
-        code:          code!,
-        code_verifier: verifier,
-      }),
-    })
-    .then(r => r.json())
-    .then(tokens => {
-      // 4. Store the access token
-      localStorage.setItem('access_token', tokens.access_token);
-
-      // 5. Decode JWT to get user info
-      const payload = JSON.parse(atob(tokens.access_token.split('.')[1]));
-      console.log('Logged in as:', payload.preferred_username);
-      console.log('Roles:', payload.roles);
-
-      // 6. Clean up and redirect
-      sessionStorage.removeItem('pkce_verifier');
-      sessionStorage.removeItem('oauth_state');
-      router.push('/dashboard');
-    });
-  }, []);
-
-  return <p>Authenticating…</p>;
-}
-```
-
----
-
-## Step 5 — Call protected APIs
-
-Include the token as a `Bearer` header on every request:
-
-```typescript
-async function apiFetch(path: string) {
-  const token = localStorage.getItem('access_token');
-
-  const res = await fetch(`http://localhost:8090${path}`, {
-    headers: {
-      'Authorization': `Bearer ${token}`,
-      'Content-Type':  'application/json',
+const handler = NextAuth({
+  providers: [
+    {
+      id: 'opengate',
+      name: 'OpenGate IAM',
+      type: 'oauth',
+      wellKnown: 'http://localhost:8080/realms/master/.well-known/openid-configuration',
+      clientId: process.env.OPENGATE_CLIENT_ID!,
+      clientSecret: process.env.OPENGATE_CLIENT_SECRET!,
+      authorization: { params: { scope: 'openid profile email' } },
+      profile(profile) {
+        return {
+          id: profile.sub,
+          name: \`\${profile.given_name} \${profile.family_name}\`,
+          email: profile.email,
+          roles: profile.roles ?? [],
+        };
+      },
     },
-  });
+  ],
+  callbacks: {
+    async jwt({ token, account, profile }) {
+      if (account) {
+        token.accessToken = account.access_token;
+        token.roles = (profile as any)?.roles ?? [];
+      }
+      return token;
+    },
+    async session({ session, token }) {
+      session.accessToken = token.accessToken as string;
+      (session.user as any).roles = token.roles;
+      return session;
+    },
+  },
+});
 
-  if (res.status === 401) {
-    // Token expired — redirect to login
-    localStorage.removeItem('access_token');
-    window.location.href = '/login';
+export { handler as GET, handler as POST };`} />
+
+<CodeBlock language="bash" filename=".env.local" code={`NEXTAUTH_URL=http://localhost:3000
+NEXTAUTH_SECRET=your-random-secret-32-chars
+
+OPENGATE_CLIENT_ID=my-nextjs-app
+OPENGATE_CLIENT_SECRET=your-client-secret`} />
+
+---
+
+## React SPA (PKCE)
+
+For React apps without a backend, use PKCE with a public client (no client secret):
+
+<CodeBlock language="typescript" filename="src/auth/oidcConfig.ts" code={`import { WebStorageStateStore } from 'oidc-client-ts';
+
+export const oidcConfig = {
+  authority: 'http://localhost:8080/realms/master',
+  client_id: 'my-spa',
+  redirect_uri: window.location.origin + '/callback',
+  response_type: 'code',
+  scope: 'openid profile email',
+  post_logout_redirect_uri: window.location.origin,
+  userStore: new WebStorageStateStore({ store: window.sessionStorage }),
+};`} />
+
+<CodeBlock language="tsx" filename="src/main.tsx" code={`import { AuthProvider } from 'react-oidc-context';
+import { oidcConfig } from './auth/oidcConfig';
+
+export default function App() {
+  return (
+    <AuthProvider {...oidcConfig}>
+      <YourApp />
+    </AuthProvider>
+  );
+}`} />
+
+---
+
+## Protecting Routes
+
+<CodeBlock language="tsx" filename="src/components/ProtectedRoute.tsx" code={`import { useAuth } from 'react-oidc-context';
+
+export function ProtectedRoute({ children }: { children: React.ReactNode }) {
+  const auth = useAuth();
+
+  if (auth.isLoading) return <div>Loading...</div>;
+  if (!auth.isAuthenticated) {
+    auth.signinRedirect();
+    return null;
   }
 
-  return res.json();
+  return <>{children}</>;
+}`} />
+
+**Next.js App Router middleware:**
+
+<CodeBlock language="typescript" filename="middleware.ts" code={`export { default } from 'next-auth/middleware';
+
+export const config = {
+  matcher: ['/dashboard/:path*', '/admin/:path*'],
+};`} />
+
+---
+
+## Calling the API
+
+<CodeBlock language="typescript" filename="src/lib/api.ts" code={`import { getSession } from 'next-auth/react';
+
+export async function apiFetch(path: string, init?: RequestInit) {
+  const session = await getSession();
+  return fetch(\`http://localhost:8080\${path}\`, {
+    ...init,
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: \`Bearer \${session?.accessToken}\`,
+      ...init?.headers,
+    },
+  });
 }
 
 // Usage
-const products = await apiFetch('/api/products');
-const me       = await apiFetch('/api/me');
-```
+const res = await apiFetch('/api/users?realm=master');
+const { content } = await res.json();`} />
 
----
-
-## Testing the flow
-
-1. Open **http://localhost:3003/login**
-2. Click **"Login with OpenGate IAM"**
-3. You are redirected to OpenGate's login form at `localhost:9081/login`
-4. Enter `admin` / `admin`
-5. OpenGate redirects back to `localhost:3003/callback?code=...`
-6. Callback page exchanges the code and stores your JWT
-7. You land on `/products` — fully authenticated
-
-<Callout variant="info" title="Inspect the token">
-After login, open DevTools → Application → Local Storage → `og_token`.
-Paste it into **https://jwt.io** to inspect claims.
+<Callout variant="info" title="Token refresh">
+  next-auth handles token refresh automatically using the `refresh_token` grant. For React SPA, `react-oidc-context` auto-renews tokens before expiry using silent refresh.
 </Callout>
-
----
-
-## Token structure
-
-```json
-{
-  "sub": "admin",
-  "preferred_username": "admin",
-  "realm": "master",
-  "roles": ["admin", "user"],
-  "realm_access": { "roles": ["admin", "user"] },
-  "iss": "http://localhost:9080/realms/master",
-  "exp": 1234568790
-}
-```
-
----
-
-## Full flow diagram
-
-```
-Browser                    OpenGate (9081)           Your API (8090)
-   │                            │                         │
-   │── GET /login ─────────────>│                         │
-   │<─ 302 /oauth2/authorize ───│                         │
-   │                            │                         │
-   │── GET /oauth2/authorize ──>│                         │
-   │   ?code_challenge=S256     │                         │
-   │<─ 200 Login Form ──────────│                         │
-   │                            │                         │
-   │── POST /login (admin/admin)>│                         │
-   │<─ 302 /callback?code=xxx ──│                         │
-   │                            │                         │
-   │── POST /oauth2/token ─────>│                         │
-   │   code + code_verifier     │                         │
-   │<─ { access_token: JWT } ───│                         │
-   │                            │                         │
-   │── GET /api/products ───────────────────────────────>│
-   │   Authorization: Bearer JWT                          │
-   │<─ 200 [ products... ] ─────────────────────────────│
-```

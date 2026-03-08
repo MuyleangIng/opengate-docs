@@ -6,69 +6,143 @@ export const metadata = { title: 'Architecture Overview — OpenGate IAM' };
 
 OpenGate IAM is designed as a **true microservices architecture** — each service owns its own database, communicates asynchronously via Kafka, and is independently deployable.
 
-## Request Flow
+## On this page
+
+- [System Diagram](#system-diagram)
+- [Design Principles](#design-principles)
+- [Event Topology](#event-topology)
+- [Security Model](#security-model)
+- [Multi-Tenancy](#multi-tenancy-realms)
+
+---
+
+## System Diagram
 
 ```
-Client App
-    │
-    ▼
-┌─────────────────────────────────────────┐
-│        opengate-gateway (8080)          │
-│  Spring Cloud Gateway + Redis           │
-│  CORS · Rate Limiting · Request Logging │
-└──────────────┬──────────────────────────┘
-               │ routes by path
-    ┌──────────┼──────────────────────────┐
-    ▼          ▼          ▼               ▼
- auth(8081) user(8082) realm(8083)  rbac(8084)
-    │          │
-    ▼          ▼
-  Redis    PostgreSQL
-    │          │
-    └──────────┴──── Kafka ────► notification(8088)
-                                 session(8087)
+                          ┌──────────────────────────────────┐
+                          │         CLIENT APPLICATIONS      │
+                          │   Browser · Mobile · Backend     │
+                          └─────────────────┬────────────────┘
+                                            │ HTTPS :443
+                                            ▼
+                        ┌───────────────────────────────────────┐
+                        │         REVERSE PROXY / CDN           │
+                        │        Nginx · Traefik · ALB          │
+                        └───────────────────┬───────────────────┘
+                                            │ HTTP :8080
+                                            ▼
+┌───────────────────────────────────────────────────────────────────────┐
+│                    opengate-gateway  :8080                            │
+│          Spring Cloud Gateway                                         │
+│          ┌──────────┐  ┌───────────┐  ┌────────────────────────┐     │
+│          │   CORS   │  │  Routing  │  │  Request / Rate Log    │     │
+│          └──────────┘  └───────────┘  └────────────────────────┘     │
+└────┬──────────┬──────────┬──────────┬──────────┬──────────┬──────────┘
+     │          │          │          │          │          │
+     ▼          ▼          ▼          ▼          ▼          ▼
+┌─────────┐ ┌───────┐ ┌────────┐ ┌───────┐ ┌────────┐ ┌─────────┐
+│  auth   │ │ user  │ │ realm  │ │ rbac  │ │ client │ │ mfa     │
+│  :8081  │ │ :8082 │ │ :8083  │ │ :8084 │ │  :8085 │ │  :8086  │
+└────┬────┘ └───┬───┘ └───┬────┘ └───┬───┘ └────┬───┘ └────┬────┘
+     │          │         │          │           │           │
+     ▼          ▼         └──────────┴───────────┘           │
+┌─────────┐ ┌──────────────────────────────────────┐         │
+│  Redis  │ │            PostgreSQL 16              │         ▼
+│  :6379  │ │  _auth · _user · _realm · _rbac ...  │    ┌─────────┐
+└────┬────┘ └──────────────────────────────────────┘    │  Redis  │
+     │                                                   │  :6379  │
+     └────────────────────┬──────────────────────────────┘
+                          │
+                          ▼
+         ┌────────────────────────────────────────┐
+         │            Apache Kafka                │
+         │  user.created  auth.login.*  session.* │
+         └──────────┬─────────────────────────────┘
+                    │
+         ┌──────────┴─────────────┐
+         ▼                        ▼
+   ┌─────────┐           ┌──────────────────┐
+   │ session │           │  notification    │
+   │  :8087  │           │      :8088       │
+   └─────────┘           └──────────────────┘
+                                  │
+                          ┌───────┴──────────┐
+                          ▼                  ▼
+                    ┌──────────┐       ┌──────────┐
+                    │  SMTP    │       │ admin-api│
+                    │ Server   │       │  :8089   │
+                    └──────────┘       └──────────┘
 ```
+
+---
 
 ## Design Principles
 
 ### 1. Database per Service
-Each microservice has its own PostgreSQL database. No shared tables, no cross-service JOINs. Data consistency is maintained via eventual consistency through Kafka events.
 
-### 2. Event-Driven
-All state changes publish Kafka events. Example events:
+Each microservice has its own PostgreSQL database. No shared tables, no cross-service JOINs. Data consistency is maintained through eventual consistency via Kafka events.
 
-| Topic | Producer | Consumers |
-|-------|----------|-----------|
-| `user.created` | user-service | notification-service |
-| `auth.login.success` | auth-service | session-service |
-| `auth.login.failure` | auth-service | notification-service |
-| `session.terminated` | session-service | — |
+| Service | Database |
+|---|---|
+| auth-service | `opengate_auth` |
+| user-service | `opengate_users` |
+| realm-service | `opengate_realms` |
+| rbac-service | `opengate_rbac` |
+| client-service | `opengate_clients` |
+| notification-service | `opengate_notifications` |
 
-### 3. Gateway as Single Entry Point
-All external traffic enters through the gateway on port `8080`. Internal services are not exposed directly. The gateway handles:
-- CORS headers
-- Route matching
-- Request/response logging
-- Redis-based rate limiting (planned)
+### 2. Gateway as Single Entry Point
 
-### 4. Stateless Services
+All external traffic enters through the gateway on port `8080`. Internal services are **never** exposed directly. The gateway handles CORS, routing, and request logging.
+
+### 3. Stateless Services
+
 All business logic services are stateless. State lives in:
-- **PostgreSQL** — persistent data (users, roles, clients, realms)
-- **Redis** — ephemeral data (sessions, OTPs, rate limit counters)
+
+- **PostgreSQL** — persistent entities (users, roles, clients, realms)
+- **Redis** — ephemeral data (sessions, OTPs, rate limit counters, token blacklist)
 - **Kafka** — event stream (audit trail)
 
-<Callout variant="info" title="Auth service exception">
-The auth service uses Redis to store authorization codes and refresh tokens with TTLs, making it the only service with meaningful Redis dependency.
-</Callout>
+---
+
+## Event Topology
+
+| Topic | Producer | Consumers |
+|---|---|---|
+| `user.created` | user-service | notification-service |
+| `user.email_verified` | user-service | — |
+| `auth.login.success` | auth-service | session-service |
+| `auth.login.failure` | auth-service | notification-service |
+| `auth.logout` | auth-service | session-service |
+| `session.terminated` | session-service | — |
+| `mfa.otp_sent` | mfa-service | — |
+
+---
 
 ## Security Model
 
 ```
-Request → Gateway → Service → SecurityConfig (permit all)
+Request
+  └─► Gateway (JWT validation via Spring Security OAuth2 Resource Server)
+        └─► Service (SecurityConfig: permitAll — gateway already verified)
 ```
 
-Individual services trust the gateway. The gateway validates JWTs using Spring Security's OAuth2 Resource Server before forwarding requests. Each service's `SecurityConfig` permits all (gateway handles auth).
+<Callout variant="info" title="Auth service exception">
+  The auth-service uses Redis to store authorization codes and refresh tokens with TTLs — it is the only service with a meaningful Redis write dependency.
+</Callout>
+
+---
 
 ## Multi-Tenancy (Realms)
 
-Every resource is scoped to a `realmName`. The realm is extracted from the JWT claims or from the URL path (`/realms/{realm}/...`). Realm isolation is enforced at the database query level — every repository query includes `realmName` as a filter.
+Every resource is scoped to a `realmName`. The realm is extracted from the JWT `realm` claim or from the URL path (`/realms/{realm}/...`). Realm isolation is enforced at the **database query level** — every repository query includes `realmName` as a predicate.
+
+```
+/realms/{realmName}/...
+       │
+       ▼
+  JWT claim: realm = "acme-corp"
+       │
+       ▼
+  Repository: WHERE realm_name = 'acme-corp'
+```

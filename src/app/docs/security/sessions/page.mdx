@@ -1,112 +1,119 @@
-export const metadata = { title: 'Session Management' };
+import { Callout } from '@/components/docs/Callout';
+import { CodeBlock } from '@/components/docs/CodeBlock';
+
+export const metadata = { title: 'Session Management — OpenGate IAM' };
 
 # Session Management
 
-OpenGate IAM manages user sessions via the **`opengate-session-service`** (`:9087`) backed by **Redis 7**. Sessions track active logins, device info, and support revocation.
+OpenGate IAM manages user sessions via `opengate-session-service` (port `8087`) backed by **Redis 7**. Sessions track active logins per device and support remote revocation.
+
+## On this page
+
+- [How Sessions Work](#how-sessions-work)
+- [Session Lifetime](#session-lifetime)
+- [Listing Sessions](#listing-sessions)
+- [Revoking Sessions](#revoking-sessions)
+- [Token Revocation](#token-revocation)
+- [Single Sign-On](#single-sign-on)
+
+---
 
 ## How Sessions Work
 
 ```
-User logs in (OAuth2 authorization_code flow)
-  → Auth service issues access_token + refresh_token
-  → Session record created in Redis
-  → Session ID embedded in token claims
-  → Session tracks: userId, realm, device, IP, created_at, last_active
+User authenticates (authorization_code flow)
+         │
+         ▼
+Auth Service issues access_token + refresh_token
+         │
+         ▼
+Session Service creates session record in Redis
+         │
+         ├─ Key: session:{realmId}:{sessionId}
+         ├─ Fields: userId, realm, ipAddress, userAgent,
+         │          createdAt, expiresAt, clientIds
+         └─ TTL: 8 hours (default)
+
+User makes API request → Gateway validates JWT
+         │
+         ▼
+Gateway checks token blacklist (Redis)
+         │
+         ▼
+Request forwarded to service if valid
 ```
+
+---
 
 ## Session Lifetime
 
-| Token | Default TTL | Configurable |
+| Token / Object | Default TTL | Configurable Per Realm |
 |---|---|---|
-| Access Token | 5 minutes | `access-token-time-to-live` |
-| Refresh Token | 30 days | `refresh-token-time-to-live` |
-| Session (Redis) | 30 days | `session-idle-timeout` |
+| Access Token | 5 minutes | ✅ Yes |
+| Refresh Token | 30 days | ✅ Yes |
+| Session (Redis) | 8 hours | ✅ Yes |
 
-## Listing Active Sessions
+---
 
-```bash
-# Get all sessions for a user
-GET /admin/realms/master/users/{userId}/sessions
-Authorization: Bearer <admin_token>
+## Listing Sessions
 
-# Response
-[
+<CodeBlock language="bash" code={`# Get all active sessions for a user
+curl -H "Authorization: Bearer $ADMIN_TOKEN" \\
+  "http://localhost:8080/api/sessions?realm=master&userId=usr_abc123"`} />
+
+<CodeBlock language="json" code={`[
   {
-    "sessionId": "sess-uuid",
-    "userId": "user-uuid",
-    "realm": "master",
+    "sessionId": "sess-uuid-1",
+    "userId": "usr_abc123",
+    "realmId": "master",
     "ipAddress": "192.168.1.10",
-    "userAgent": "Mozilla/5.0 ...",
-    "createdAt": "2026-03-01T10:00:00Z",
-    "lastActiveAt": "2026-03-08T14:30:00Z",
-    "clients": ["sample-app"]
+    "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)...",
+    "createdAt": "2025-06-01T10:00:00Z",
+    "expiresAt": "2025-06-01T18:00:00Z",
+    "clientIds": ["opengate-console"]
   }
-]
-```
+]`} />
 
-## Revoking a Session
+---
 
-```bash
-# Revoke a specific session (logs out that device)
-DELETE /admin/realms/master/sessions/{sessionId}
-Authorization: Bearer <admin_token>
-```
+## Revoking Sessions
 
-## Revoking All Sessions for a User
+<CodeBlock language="bash" code={`# Revoke a specific session (logs out that device)
+curl -X DELETE \\
+  -H "Authorization: Bearer $ADMIN_TOKEN" \\
+  "http://localhost:8080/api/sessions/sess-uuid-1"
 
-```bash
-# Force logout all devices
-DELETE /admin/realms/master/users/{userId}/sessions
-Authorization: Bearer <admin_token>
-```
+# Revoke ALL sessions for a user (force logout all devices)
+curl -X DELETE \\
+  -H "Authorization: Bearer $ADMIN_TOKEN" \\
+  "http://localhost:8080/api/sessions?realm=master&userId=usr_abc123"`} />
 
-## Token Refresh
+When a session is revoked, its JTI is added to the Redis blacklist. The gateway rejects all subsequent requests with that token immediately — no need to wait for token expiry.
 
-```bash
-POST http://localhost:9081/oauth2/token
-Content-Type: application/x-www-form-urlencoded
-
-grant_type=refresh_token
-&refresh_token=<refresh_token>
-&client_id=sample-app
-```
-
-> If the session has been revoked, refresh token requests will return `401 invalid_grant`.
+---
 
 ## Token Revocation
 
-```bash
-# Revoke an access or refresh token
-POST http://localhost:9081/oauth2/revoke
-Content-Type: application/x-www-form-urlencoded
+<CodeBlock language="bash" code={`# Revoke an access or refresh token directly
+curl -X POST http://localhost:8080/realms/master/protocol/openid-connect/revoke \\
+  -d "token=<refresh_token>" \\
+  -d "client_id=opengate-console"`} />
 
-token=<token>
-&client_id=sample-app
-```
+<Callout variant="info" title="Immediate invalidation">
+  OpenGate uses a Redis-based token blacklist. Revocation takes effect within milliseconds — not just at the next token expiry.
+</Callout>
 
-## Session Configuration
+---
 
-```yaml
-# opengate-session-service application.yml
-session:
-  access-token-time-to-live: 300        # 5 minutes
-  refresh-token-time-to-live: 2592000   # 30 days
-  session-idle-timeout: 1800            # 30 minutes idle
-  max-sessions-per-user: 5              # concurrent device limit
+## Single Sign-On
 
-spring:
-  data:
-    redis:
-      host: localhost
-      port: 6379
-```
+Users who authenticate in one app within the same realm are automatically authenticated in other apps without re-entering credentials.
 
-## Single Sign-On (SSO)
+To force re-authentication:
 
-OpenGate IAM supports SSO across multiple clients within the same realm. Once a user authenticates with one app, subsequent authorization requests to other apps in the same realm will auto-authenticate without re-entering credentials.
+<CodeBlock language="bash" code={`# Add prompt=login to force credential re-entry
+GET /realms/master/protocol/openid-connect/auth?...&prompt=login`} />
 
-To force re-authentication, use `prompt=login`:
-
-```
-GET /oauth2/authorize?...&prompt=login
-```
+<Callout variant="warning" title="SSO scope">
+  SSO is scoped to a **realm**. Users in `realm-a` cannot SSO into `realm-b` — each realm is a fully isolated tenant.
+</Callout>

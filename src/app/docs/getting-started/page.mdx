@@ -5,28 +5,82 @@ export const metadata = { title: 'Introduction — OpenGate IAM' };
 
 # Introduction
 
-**OpenGate IAM** is a fully open-source, self-hosted Identity & Access Management platform built with **Spring Boot 3 microservices** and a **Next.js 14** Admin Console — inspired by Keycloak and Okta but designed as true cloud-native microservices.
+**OpenGate IAM** is a fully open-source, self-hosted Identity & Access Management platform built with **Spring Boot 3 microservices** and a **Next.js 14** Admin Console — inspired by Keycloak and Okta but engineered as true cloud-native microservices.
 
 <Callout variant="success" title="Production-ready">
-OpenGate implements OAuth 2.1, OIDC, PKCE, TOTP MFA, RBAC, and multi-tenancy (Realms) out of the box.
+  OpenGate implements **OAuth 2.1**, **OIDC**, **PKCE**, **TOTP MFA**, **RBAC**, and **multi-tenancy (Realms)** out of the box.
 </Callout>
+
+## On this page
+
+- [What is OpenGate IAM?](#what-is-opengate-iam)
+- [Platform Architecture](#platform-architecture)
+- [Services Overview](#services-overview)
+- [Tech Stack](#tech-stack)
+
+---
 
 ## What is OpenGate IAM?
 
 OpenGate provides everything you need to secure your applications:
 
-- **Multi-realm tenancy** — isolate users, roles, and clients per organization
-- **OAuth 2.1 / OIDC** — authorization_code + PKCE, client_credentials, refresh_token
-- **MFA** — TOTP (Google Authenticator), email OTP, SMS OTP, backup codes
-- **RBAC** — roles, composite roles, groups, user-role mappings
-- **Sessions** — Redis-backed, 8-hour TTL, per-device tracking
-- **Audit events** — Kafka-driven event streaming for all auth events
-- **Beautiful Admin Console** — Next.js 14 with real-time stats and management UI
+| Capability | Description |
+|---|---|
+| **Multi-realm tenancy** | Isolate users, roles, and clients per organization |
+| **OAuth 2.1 / OIDC** | `authorization_code` + PKCE, `client_credentials`, `refresh_token` |
+| **MFA** | TOTP (Google Authenticator), email OTP, SMS OTP, backup codes |
+| **RBAC** | Roles, composite roles, groups, user-role mappings |
+| **Sessions** | Redis-backed, configurable TTL, per-device tracking |
+| **Audit events** | Kafka-driven event streaming for all auth events |
+| **Admin Console** | Next.js 14 with real-time stats and management UI |
+
+---
+
+## Platform Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                      INTERNET / CLIENT APPS                     │
+└───────────────────────────┬─────────────────────────────────────┘
+                            │ HTTPS
+                            ▼
+┌─────────────────────────────────────────────────────────────────┐
+│              opengate-gateway  :8080                            │
+│   Spring Cloud Gateway · CORS · Rate Limit · Request Log       │
+└──────┬──────────┬──────────┬──────────┬──────────┬─────────────┘
+       │          │          │          │          │
+       ▼          ▼          ▼          ▼          ▼
+  ┌─────────┐ ┌───────┐ ┌────────┐ ┌───────┐ ┌─────────┐
+  │  auth   │ │ user  │ │ realm  │ │ rbac  │ │ client  │
+  │  :8081  │ │ :8082 │ │ :8083  │ │ :8084 │ │  :8085  │
+  └────┬────┘ └───┬───┘ └───┬────┘ └───┬───┘ └────┬────┘
+       │          │         │          │           │
+       ▼          ▼         ▼          ▼           ▼
+  ┌─────────┐ ┌──────────────────────────────────────┐
+  │  Redis  │ │            PostgreSQL                 │
+  │  :6379  │ │  opengate_{auth,user,realm,rbac,...}  │
+  └─────────┘ └──────────────────────────────────────┘
+       │
+       ▼
+  ┌──────────────────────────────────────────────────┐
+  │                  Apache Kafka                    │
+  │   user.created · auth.login.* · session.*        │
+  └──────────────┬───────────────────────────────────┘
+                 │
+       ┌─────────┴──────────┐
+       ▼                    ▼
+  ┌─────────┐         ┌──────────────┐
+  │   mfa   │         │notification  │
+  │  :8086  │         │    :8088     │
+  └─────────┘         └──────────────┘
+```
+
+---
 
 ## Services Overview
 
 <div className="grid grid-cols-1 md:grid-cols-2 gap-4 not-prose my-6">
-  <ServiceCard name="opengate-gateway" port={8080} description="Spring Cloud Gateway — API router, CORS, rate limiting, request logging" tech={['Spring Cloud Gateway', 'Redis']} />
+  <ServiceCard name="opengate-gateway"      port={8080} description="Spring Cloud Gateway — API router, CORS, rate limiting, request logging" tech={['Spring Cloud Gateway', 'Redis']} />
   <ServiceCard name="opengate-auth-service" port={8081} description="OAuth2/OIDC Authorization Server with Spring Authorization Server 1.3" tech={['Spring Auth Server', 'JWT', 'Redis']} />
   <ServiceCard name="opengate-user-service" port={8082} description="User lifecycle management — CRUD, password, email verification" tech={['Spring Data JPA', 'BCrypt', 'Kafka']} />
   <ServiceCard name="opengate-realm-service" port={8083} description="Multi-tenant realm configuration — themes, token settings, SMTP" tech={['Spring Data JPA', 'Flyway']} />
@@ -38,17 +92,19 @@ OpenGate provides everything you need to secure your applications:
   <ServiceCard name="opengate-admin-api" port={8089} description="Aggregated admin REST API — proxies all management operations" tech={['WebFlux', 'WebClient']} />
 </div>
 
+---
+
 ## Tech Stack
 
-| Layer | Technology |
-|-------|-----------|
-| Language | Java 21 |
-| Framework | Spring Boot 3.3.0 |
-| Build | Gradle 8.7 (Kotlin DSL) |
-| Auth | Spring Authorization Server 1.3 |
-| Database | PostgreSQL 16 + Flyway |
-| Cache | Redis 7 |
-| Messaging | Apache Kafka (KRaft) |
-| Secrets | HashiCorp Vault |
-| Admin UI | Next.js 14 + TypeScript |
-| Docs | Next.js 14 + MDX |
+| Layer | Technology | Version |
+|---|---|---|
+| Language | Java | 21 |
+| Framework | Spring Boot | 3.3.0 |
+| Build | Gradle (Kotlin DSL) | 8.7 |
+| Auth | Spring Authorization Server | 1.3 |
+| Database | PostgreSQL + Flyway | 16 |
+| Cache | Redis | 7 |
+| Messaging | Apache Kafka (KRaft) | 7.6 |
+| Secrets | HashiCorp Vault | 1.16 |
+| Admin UI | Next.js + TypeScript | 14 |
+| Docs | Next.js + MDX | 14 |

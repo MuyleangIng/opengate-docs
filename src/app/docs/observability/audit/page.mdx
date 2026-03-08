@@ -1,155 +1,121 @@
-export const metadata = { title: 'Audit Events' };
+import { Callout } from '@/components/docs/Callout';
+import { CodeBlock } from '@/components/docs/CodeBlock';
+
+export const metadata = { title: 'Audit Events — OpenGate IAM' };
 
 # Audit Events
 
 OpenGate IAM emits structured **audit events** via **Apache Kafka** for every authentication and administrative action. Use them for security monitoring, compliance, and SIEM integration.
 
-## Event Architecture
+## On this page
 
-```
-Auth / Admin Action
-  → opengate-auth-service (or admin-api)
-  → Kafka Topic: opengate.audit.events
-  → opengate-notification-service (consumer)
-  → Storage / SIEM / Alert System
-```
+- [Event Schema](#event-schema)
+- [Event Types](#event-types)
+- [Consuming Events](#consuming-events)
+- [Forwarding to SIEM](#forwarding-to-siem)
+- [Retention & Compliance](#retention--compliance)
 
-## Event Structure
+---
 
-Every audit event is a JSON object:
+## Event Schema
 
-```json
-{
-  "eventId": "evt-uuid-1234",
-  "eventType": "USER_LOGIN_SUCCESS",
-  "timestamp": "2026-03-08T14:30:00.000Z",
+All events use the `DomainEvent` envelope:
+
+<CodeBlock language="json" code={`{
+  "eventId": "550e8400-e29b-41d4-a716-446655440000",
+  "eventType": "auth.login.success",
+  "aggregateId": "usr_abc123",
   "realm": "master",
-  "userId": "user-uuid",
-  "username": "john_doe",
-  "clientId": "sample-app",
-  "ipAddress": "192.168.1.10",
-  "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)...",
-  "sessionId": "sess-uuid",
-  "details": {
-    "grantType": "authorization_code",
-    "scopes": ["openid", "profile"],
-    "mfaUsed": true
-  }
-}
-```
-
-## Audit Event Types
-
-### Authentication Events
-
-| Event Type | Trigger |
-|---|---|
-| `USER_LOGIN_SUCCESS` | Successful password + MFA login |
-| `USER_LOGIN_FAILED` | Wrong password or locked account |
-| `USER_LOGOUT` | User or admin initiated logout |
-| `TOKEN_ISSUED` | New access/refresh token granted |
-| `TOKEN_REFRESHED` | Token refreshed via refresh_token |
-| `TOKEN_REVOKED` | Token or session revoked |
-| `MFA_CHALLENGE_SENT` | OTP or TOTP challenge issued |
-| `MFA_VERIFIED` | MFA code verified successfully |
-| `MFA_FAILED` | Incorrect MFA code submitted |
-
-### Admin Events
-
-| Event Type | Trigger |
-|---|---|
-| `USER_CREATED` | Admin created a new user |
-| `USER_UPDATED` | User profile or password changed |
-| `USER_DELETED` | User deleted from realm |
-| `ROLE_ASSIGNED` | Role assigned to user or group |
-| `ROLE_REMOVED` | Role removed from user |
-| `CLIENT_CREATED` | New OAuth2 client registered |
-| `CLIENT_SECRET_REGENERATED` | Client secret rotated |
-| `REALM_UPDATED` | Realm configuration changed |
-
-## Kafka Topic Configuration
-
-```yaml
-# application.yml (auth-service / admin-api)
-spring:
-  kafka:
-    bootstrap-servers: localhost:9092
-    producer:
-      key-serializer: org.apache.kafka.common.serialization.StringSerializer
-      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
-      properties:
-        spring.json.add.type.headers: false
-
-opengate:
-  audit:
-    topic: opengate.audit.events
-    enabled: true
-```
-
-## Consuming Audit Events
-
-```java
-@Component
-public class AuditEventConsumer {
-
-  @KafkaListener(topics = "opengate.audit.events", groupId = "audit-logger")
-  public void handle(AuditEvent event) {
-    log.info("[AUDIT] {} | user={} | ip={} | realm={}",
-      event.getEventType(),
-      event.getUsername(),
-      event.getIpAddress(),
-      event.getRealm()
-    );
-    // Forward to SIEM, database, or alerting system
-  }
-}
-```
-
-## Query Audit Events via API
-
-```bash
-# Get recent audit events for a realm
-GET /admin/realms/master/audit-events?limit=50&eventType=USER_LOGIN_FAILED
-Authorization: Bearer <admin_token>
-
-# Response
-[
-  {
-    "eventId": "evt-uuid",
-    "eventType": "USER_LOGIN_FAILED",
-    "timestamp": "2026-03-08T14:00:00Z",
-    "username": "unknown_user",
+  "payload": {
+    "clientId": "opengate-console",
     "ipAddress": "203.0.113.42",
-    "details": { "reason": "INVALID_CREDENTIALS" }
+    "userAgent": "Mozilla/5.0 ...",
+    "mfaUsed": true
+  },
+  "occurredAt": "2025-06-01T10:30:00Z"
+}`} />
+
+---
+
+## Event Types
+
+| Topic | Event Type | Trigger |
+|---|---|---|
+| `opengate.auth` | `auth.login.success` | Successful password + MFA authentication |
+| `opengate.auth` | `auth.login.failure` | Failed login attempt |
+| `opengate.auth` | `auth.logout` | User logout or token revocation |
+| `opengate.auth` | `auth.token.refresh` | Refresh token exchanged |
+| `opengate.users` | `user.created` | New user registered |
+| `opengate.users` | `user.updated` | User profile updated |
+| `opengate.users` | `user.deleted` | User account deleted |
+| `opengate.users` | `user.email_verified` | Email verification completed |
+| `opengate.users` | `user.password_changed` | Password updated |
+| `opengate.sessions` | `session.created` | New session opened |
+| `opengate.sessions` | `session.terminated` | Session revoked (logout / admin) |
+| `opengate.mfa` | `mfa.enrolled` | User enrolled TOTP or Email OTP |
+| `opengate.mfa` | `mfa.disabled` | MFA removed from account |
+
+---
+
+## Consuming Events
+
+<CodeBlock language="java" filename="AuditConsumer.java" code={`@Service
+public class AuditConsumer {
+
+  @KafkaListener(topics = {"opengate.auth", "opengate.users", "opengate.sessions"},
+                 groupId = "audit-service")
+  public void handleAuditEvent(DomainEvent event) {
+    log.info("AUDIT event={} aggregate={} realm={} at={}",
+      event.eventType(), event.aggregateId(),
+      event.realm(), event.occurredAt()
+    );
+    // Forward to SIEM, write to audit DB, etc.
   }
-]
-```
+}`} />
 
-## SIEM Integration
+---
 
-Audit events can be forwarded to any SIEM tool:
+## Forwarding to SIEM
 
-```yaml
-# Example: forward to Elasticsearch via Kafka Connect
-connectors:
-  - name: audit-to-elasticsearch
-    config:
-      connector.class: io.confluent.connect.elasticsearch.ElasticsearchSinkConnector
-      topics: opengate.audit.events
-      connection.url: http://elasticsearch:9200
-      type.name: audit_event
-      key.ignore: true
-```
+### Kafka → Elasticsearch (via Logstash)
 
-## Retention
+<CodeBlock language="conf" filename="logstash-audit.conf" code={`input {
+  kafka {
+    bootstrap_servers => "localhost:9092"
+    topics => ["opengate.auth", "opengate.users", "opengate.sessions"]
+    codec => json
+  }
+}
 
-Configure Kafka topic retention to meet your compliance requirements:
+filter {
+  date {
+    match => ["occurredAt", "ISO8601"]
+    target => "@timestamp"
+  }
+}
 
-```bash
-# Set 90-day retention on audit topic
-kafka-configs.sh --bootstrap-server localhost:9092 \
-  --entity-type topics \
-  --entity-name opengate.audit.events \
-  --alter \
-  --add-config retention.ms=7776000000
-```
+output {
+  elasticsearch {
+    hosts => ["elasticsearch:9200"]
+    index => "opengate-audit-%{+YYYY.MM.dd}"
+  }
+}`} />
+
+### Kafka → Splunk
+
+Use the **Splunk Kafka Connector** with topics `opengate.auth`, `opengate.users`, `opengate.sessions`.
+
+---
+
+## Retention & Compliance
+
+| Requirement | Recommendation |
+|---|---|
+| **GDPR** | Retain audit logs for 1 year; anonymize PII after retention period |
+| **SOC 2** | Retain for 1 year with tamper-evident storage |
+| **PCI DSS** | Retain for 1 year (3 months readily available) |
+| **Kafka retention** | Set `retention.ms=31536000000` (1 year) on audit topics |
+
+<Callout variant="warning" title="PII in audit logs">
+  Audit events may contain email addresses and IP addresses. Ensure your log retention and access policies comply with applicable data protection regulations.
+</Callout>

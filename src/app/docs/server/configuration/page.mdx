@@ -1,65 +1,149 @@
 import { Callout } from '@/components/docs/Callout';
+import { CodeBlock } from '@/components/docs/CodeBlock';
 
-export const metadata = { title: 'Configuring OpenGate — OpenGate IAM' };
+export const metadata = { title: 'Server Configuration — OpenGate IAM' };
 
-# Configuring OpenGate
+# Server Configuration
 
-OpenGate is configured through `application.yml` files in each service, environment variables, and the Admin Console.
+## On this page
 
-## Auth Service configuration
+- [Configuration Sources](#configuration-sources)
+- [Auth Service](#auth-service)
+- [Gateway](#gateway)
+- [User Service](#user-service)
+- [Environment Variable Reference](#environment-variable-reference)
 
-```yaml
-# opengate-auth-service/src/main/resources/application.yml
-server:
-  port: 9081
+---
+
+## Configuration Sources
+
+OpenGate uses a layered configuration approach:
+
+```
+Priority (highest → lowest)
+┌──────────────────────────────────┐
+│ 1. Environment variables         │  ← Always wins
+│ 2. Docker / K8s secrets          │
+│ 3. application-{profile}.yml     │
+│ 4. application.yml               │  ← Defaults
+└──────────────────────────────────┘
+```
+
+---
+
+## Auth Service
+
+<CodeBlock language="yaml" filename="opengate-auth-service/src/main/resources/application.yml" code={`server:
+  port: \${AUTH_PORT:8081}
 
 spring:
   datasource:
-    url: jdbc:postgresql://localhost:5433/opengate_auth
-    username: opengate
-    password: opengate
+    url: jdbc:postgresql://\${POSTGRES_HOST:localhost}:\${POSTGRES_PORT:5432}/opengate_auth
+    username: \${POSTGRES_USER:opengate}
+    password: \${POSTGRES_PASSWORD:opengate}
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    show-sql: false
+  data:
+    redis:
+      host: \${REDIS_HOST:localhost}
+      port: \${REDIS_PORT:6379}
+      password: \${REDIS_PASSWORD:}
 
 opengate:
-  issuer-uri: http://localhost:9080/realms/master
+  issuer-uri: \${JWT_ISSUER_URI:http://localhost:8080/realms/master}
   token:
-    access-token-ttl: 900        # 15 minutes
-    refresh-token-ttl: 86400     # 1 day
-```
+    access-token-ttl: \${ACCESS_TOKEN_TTL:300}     # seconds
+    refresh-token-ttl: \${REFRESH_TOKEN_TTL:2592000} # 30 days`} />
 
-## Gateway configuration
+---
 
-```yaml
-# opengate-gateway/src/main/resources/application.yml
-server:
-  port: 9080
+## Gateway
+
+<CodeBlock language="yaml" filename="opengate-gateway/src/main/resources/application.yml" code={`server:
+  port: \${GATEWAY_PORT:8080}
 
 spring:
   cloud:
     gateway:
       globalcors:
-        cors-configurations:
+        corsConfigurations:
           '[/**]':
             allowedOrigins:
-              - "http://localhost:3002"
-              - "http://localhost:3003"
-            allowedMethods: [GET, POST, PUT, DELETE, OPTIONS]
+              - "http://localhost:3000"
+              - "http://localhost:3001"
+            allowedMethods: [GET, POST, PUT, DELETE, OPTIONS, PATCH]
             allowedHeaders: ["*"]
             allowCredentials: true
-```
+      routes:
+        - id: auth
+          uri: http://\${AUTH_SERVICE_HOST:localhost}:\${AUTH_SERVICE_PORT:8081}
+          predicates: [Path=/api/auth/**, /realms/**]
+        - id: users
+          uri: http://\${USER_SERVICE_HOST:localhost}:\${USER_SERVICE_PORT:8082}
+          predicates: [Path=/api/users/**]
+        - id: realms
+          uri: http://\${REALM_SERVICE_HOST:localhost}:\${REALM_SERVICE_PORT:8083}
+          predicates: [Path=/api/realms/**]
+        - id: rbac
+          uri: http://\${RBAC_SERVICE_HOST:localhost}:\${RBAC_SERVICE_PORT:8084}
+          predicates: [Path=/api/rbac/**]
+        - id: clients
+          uri: http://\${CLIENT_SERVICE_HOST:localhost}:\${CLIENT_SERVICE_PORT:8085}
+          predicates: [Path=/api/clients/**]
+        - id: mfa
+          uri: http://\${MFA_SERVICE_HOST:localhost}:\${MFA_SERVICE_PORT:8086}
+          predicates: [Path=/api/mfa/**]
+        - id: sessions
+          uri: http://\${SESSION_SERVICE_HOST:localhost}:\${SESSION_SERVICE_PORT:8087}
+          predicates: [Path=/api/sessions/**]
+        - id: admin
+          uri: http://\${ADMIN_API_HOST:localhost}:\${ADMIN_API_PORT:8089}
+          predicates: [Path=/admin/**]`} />
 
-## Environment variable overrides
+---
 
-All configuration values can be overridden with environment variables:
+## User Service
 
-```bash
-export AUTH_SERVICE_URL=http://auth:9081
-export USER_SERVICE_URL=http://users:9082
-export REALM_SERVICE_URL=http://realms:9083
-export SPRING_DATASOURCE_URL=jdbc:postgresql://db:5432/opengate_auth
-export SPRING_REDIS_HOST=redis
-export SPRING_REDIS_PORT=6379
-```
+<CodeBlock language="yaml" filename="opengate-user-service/src/main/resources/application.yml" code={`server:
+  port: \${USER_SERVICE_PORT:8082}
 
-<Callout variant="info" title="Tip">
-In production, use Kubernetes Secrets or HashiCorp Vault to manage sensitive configuration values.
+spring:
+  datasource:
+    url: jdbc:postgresql://\${POSTGRES_HOST:localhost}:5432/opengate_users
+    username: \${POSTGRES_USER:opengate}
+    password: \${POSTGRES_PASSWORD:opengate}
+    hikari:
+      maximum-pool-size: \${DB_POOL_SIZE:10}
+      minimum-idle: 2
+      connection-timeout: 30000
+  kafka:
+    bootstrap-servers: \${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer`} />
+
+---
+
+## Environment Variable Reference
+
+| Variable | Default | Description |
+|---|---|---|
+| `POSTGRES_HOST` | `localhost` | PostgreSQL hostname |
+| `POSTGRES_PORT` | `5432` | PostgreSQL port |
+| `POSTGRES_USER` | `opengate` | Database username |
+| `POSTGRES_PASSWORD` | `opengate` | Database password |
+| `REDIS_HOST` | `localhost` | Redis hostname |
+| `REDIS_PORT` | `6379` | Redis port |
+| `REDIS_PASSWORD` | _(empty)_ | Redis AUTH password |
+| `KAFKA_BOOTSTRAP_SERVERS` | `localhost:9092` | Kafka bootstrap |
+| `JWT_ISSUER_URI` | `http://localhost:8080/realms/master` | Token issuer |
+| `ACCESS_TOKEN_TTL` | `300` | Access token TTL (seconds) |
+| `REFRESH_TOKEN_TTL` | `2592000` | Refresh token TTL (seconds) |
+| `VAULT_URI` | `http://localhost:8200` | HashiCorp Vault URI |
+| `VAULT_TOKEN` | `root` | Vault root token |
+
+<Callout variant="danger" title="Never commit secrets to source control">
+  Use `.env` files locally (add to `.gitignore`) and Kubernetes Secrets or HashiCorp Vault in production.
 </Callout>

@@ -1,78 +1,133 @@
+import { Callout } from '@/components/docs/Callout';
 import { CodeBlock } from '@/components/docs/CodeBlock';
 
 export const metadata = { title: 'Roles & RBAC API — OpenGate IAM' };
 
 # Roles & RBAC API
 
-Base path: `/api/realms/{realm}/roles` and `/api/realms/{realm}/users/{userId}/role-mappings`
+## On this page
+
+- [List Roles](#list-roles)
+- [Create Role](#create-role)
+- [Assign Roles to User](#assign-roles-to-user)
+- [Get User Roles](#get-user-roles)
+- [Remove Role from User](#remove-role-from-user)
+- [Policy Evaluation](#policy-evaluation)
+
+---
 
 ## List Roles
 
 ```
-GET /api/realms/{realm}/roles
+GET /api/rbac/roles?realm={realm}
+Authorization: Bearer <token>
 ```
 
-**Response:**
+<CodeBlock language="bash" code={`curl -H "Authorization: Bearer $TOKEN" \\
+  "http://localhost:8080/api/rbac/roles?realm=master"`} />
+
 <CodeBlock language="json" code={`[
-  {
-    "id": "role_abc123",
-    "realmName": "master",
-    "name": "admin",
-    "description": "Full administrative access",
-    "composite": false,
-    "createdAt": "2024-01-01T00:00:00Z"
-  }
+  { "id": "role-uuid-1", "name": "ROLE_ADMIN", "description": "Full access", "composite": false },
+  { "id": "role-uuid-2", "name": "ROLE_USER",  "description": "Standard access", "composite": false }
 ]`} />
+
+---
 
 ## Create Role
 
 ```
-POST /api/realms/{realm}/roles
+POST /api/rbac/roles
+Authorization: Bearer <token>
+Content-Type: application/json
 ```
 
-<CodeBlock language="json" code={`{
-  "name": "editor",
-  "description": "Can edit content but not manage users",
-  "composite": false
-}`} />
+<CodeBlock language="bash" code={`curl -X POST \\
+  -H "Authorization: Bearer $TOKEN" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "realmName": "master",
+    "name": "ROLE_EDITOR",
+    "description": "Can create and edit content",
+    "composite": false
+  }' \\
+  http://localhost:8080/api/rbac/roles`} />
 
-## Delete Role
+**Response:** `201 Created`
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `realmName` | `string` | ✅ | Target realm |
+| `name` | `string` | ✅ | Role name — convention: `ROLE_NAME` |
+| `description` | `string` | — | Human-readable description |
+| `composite` | `boolean` | — | Whether this role inherits others (default: false) |
+
+---
+
+## Assign Roles to User
 
 ```
-DELETE /api/realms/{realm}/roles/{id}
+POST /api/rbac/user-role-mappings
+Authorization: Bearer <token>
+Content-Type: application/json
 ```
 
-## Assign Role to User
+<CodeBlock language="bash" code={`curl -X POST \\
+  -H "Authorization: Bearer $TOKEN" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "userId": "usr_abc123",
+    "roleId": "role-uuid-1",
+    "realmName": "master"
+  }' \\
+  http://localhost:8080/api/rbac/user-role-mappings`} />
 
-```
-POST /api/realms/{realm}/users/{userId}/role-mappings
-```
-
-<CodeBlock language="json" code={`{ "roleId": "role_abc123" }`} />
+---
 
 ## Get User Roles
 
 ```
-GET /api/realms/{realm}/users/{userId}/role-mappings
+GET /api/rbac/user-role-mappings?userId={userId}&realm={realm}
+Authorization: Bearer <token>
 ```
 
-## Evaluate Policy
+<CodeBlock language="bash" code={`curl -H "Authorization: Bearer $TOKEN" \\
+  "http://localhost:8080/api/rbac/user-role-mappings?userId=usr_abc123&realm=master"`} />
+
+---
+
+## Remove Role from User
 
 ```
-POST /api/evaluate
+DELETE /api/rbac/user-role-mappings/{mappingId}
+Authorization: Bearer <token>
 ```
 
-<CodeBlock language="json" code={`{
-  "userId": "usr_abc123",
-  "realmName": "master",
-  "resource": "users:write"
-}`} />
+**Response:** `204 No Content`
 
-**Response:**
-<CodeBlock language="json" code={`{
-  "decision": "PERMIT",
-  "userId": "usr_abc123",
-  "roles": ["admin", "user"]
-}`} />
+---
 
-The evaluation logic: returns `PERMIT` if the user has any roles in the realm, `DENY` otherwise. Fine-grained permission evaluation can be extended via custom policy handlers.
+## Policy Evaluation
+
+Check whether a user has permission for an action:
+
+```
+POST /api/rbac/evaluate
+Authorization: Bearer <token>
+Content-Type: application/json
+```
+
+<CodeBlock language="bash" code={`curl -X POST \\
+  -H "Authorization: Bearer $TOKEN" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "userId": "usr_abc123",
+    "realmName": "master",
+    "requiredRoles": ["ROLE_EDITOR"]
+  }' \\
+  http://localhost:8080/api/rbac/evaluate`} />
+
+<CodeBlock language="json" code={`{ "decision": "PERMIT" }`} />
+
+<Callout variant="info" title="PERMIT / DENY">
+  Returns `PERMIT` if the user has **any** of the `requiredRoles`. Returns `DENY` otherwise.
+</Callout>

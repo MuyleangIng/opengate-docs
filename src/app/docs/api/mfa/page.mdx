@@ -5,100 +5,143 @@ export const metadata = { title: 'MFA API — OpenGate IAM' };
 
 # MFA API
 
-Base path: `/api/mfa`
+Manage multi-factor authentication enrollment and verification.
 
-## TOTP (Time-Based One-Time Password)
+## On this page
 
-Compatible with Google Authenticator, Authy, and any RFC 6238 TOTP app.
+- [TOTP Enrollment](#totp-enrollment)
+- [TOTP Verification](#totp-verification)
+- [Email OTP](#email-otp)
+- [Backup Codes](#backup-codes)
+- [Disable MFA](#disable-mfa)
 
-### Setup TOTP
+---
+
+## TOTP Enrollment
+
+### Step 1 — Start enrollment
 
 ```
-POST /api/mfa/totp/setup
+POST /api/mfa/totp/enroll
+Authorization: Bearer <token>
 ```
-<CodeBlock language="json" code={`{ "userId": "usr_abc123" }`} />
 
-**Response:**
+<CodeBlock language="bash" code={`curl -X POST \\
+  -H "Authorization: Bearer $TOKEN" \\
+  http://localhost:8080/api/mfa/totp/enroll`} />
+
 <CodeBlock language="json" code={`{
   "secret": "JBSWY3DPEHPK3PXP",
-  "qrUri": "otpauth://totp/OpenGate:alice@example.com?secret=JBSWY3DPEHPK3PXP&issuer=OpenGate"
+  "qrCodeUri": "otpauth://totp/OpenGate:alice@example.com?secret=JBSWY3DPEHPK3PXP&issuer=OpenGate",
+  "enrollmentId": "enroll-uuid-123"
 }`} />
 
-Use the `qrUri` to generate a QR code. The user scans it with their authenticator app.
+Display the `qrCodeUri` as a QR code. The user scans it with their authenticator app.
 
-### Verify TOTP
+### Step 2 — Confirm enrollment
+
+```
+POST /api/mfa/totp/confirm
+Authorization: Bearer <token>
+Content-Type: application/json
+```
+
+<CodeBlock language="bash" code={`curl -X POST \\
+  -H "Authorization: Bearer $TOKEN" \\
+  -H "Content-Type: application/json" \\
+  -d '{ "enrollmentId": "enroll-uuid-123", "code": "123456" }' \\
+  http://localhost:8080/api/mfa/totp/confirm`} />
+
+**Response:** `200 OK` — MFA is now active.
+
+---
+
+## TOTP Verification
+
+During login when MFA challenge is issued:
 
 ```
 POST /api/mfa/totp/verify
+Content-Type: application/json
 ```
-<CodeBlock language="json" code={`{
-  "userId": "usr_abc123",
-  "code": "123456"
-}`} />
 
-<Callout variant="info" title="Window tolerance">
-The TOTP implementation allows ±1 time window (±30 seconds) to account for clock drift.
+<CodeBlock language="bash" code={`curl -X POST \\
+  -H "Content-Type: application/json" \\
+  -d '{ "userId": "usr_abc123", "code": "654321", "mfaToken": "<mfa_token>" }' \\
+  http://localhost:8080/api/mfa/totp/verify`} />
+
+**Response:**
+
+<CodeBlock language="json" code={`{ "verified": true }`} />
+
+<Callout variant="info" title="Time tolerance">
+  OpenGate accepts TOTP codes from the previous and next 30-second windows (±1 window tolerance) to account for clock drift.
 </Callout>
+
+---
 
 ## Email OTP
 
-### Send Email OTP
-
 ```
 POST /api/mfa/email-otp/send
-```
-<CodeBlock language="json" code={`{ "userId": "usr_abc123" }`} />
+Authorization: Bearer <token>
 
-Sends a 6-digit OTP to the user's email. Stored in Redis with 10-minute TTL.
-
-### Verify Email OTP
-
-```
 POST /api/mfa/email-otp/verify
+Authorization: Bearer <token>
+Content-Type: application/json
 ```
-<CodeBlock language="json" code={`{
-  "userId": "usr_abc123",
-  "code": "847291"
-}`} />
 
-## SMS OTP
+<CodeBlock language="bash" code={`# Send OTP to user's verified email
+curl -X POST \\
+  -H "Authorization: Bearer $TOKEN" \\
+  http://localhost:8080/api/mfa/email-otp/send
 
-### Send SMS OTP
+# Verify the 6-digit code (valid 10 minutes)
+curl -X POST \\
+  -H "Authorization: Bearer $TOKEN" \\
+  -H "Content-Type: application/json" \\
+  -d '{ "code": "847291" }' \\
+  http://localhost:8080/api/mfa/email-otp/verify`} />
 
-```
-POST /api/mfa/sms-otp/send
-```
-<CodeBlock language="json" code={`{ "userId": "usr_abc123" }`} />
-
-### Verify SMS OTP
-
-```
-POST /api/mfa/sms-otp/verify
-```
-<CodeBlock language="json" code={`{
-  "userId": "usr_abc123",
-  "code": "592847"
-}`} />
+---
 
 ## Backup Codes
 
-### Generate Backup Codes
-
 ```
 POST /api/mfa/backup-codes/generate
+Authorization: Bearer <token>
 ```
-<CodeBlock language="json" code={`{ "userId": "usr_abc123" }`} />
 
-**Response:**
+<CodeBlock language="bash" code={`curl -X POST \\
+  -H "Authorization: Bearer $TOKEN" \\
+  http://localhost:8080/api/mfa/backup-codes/generate`} />
+
 <CodeBlock language="json" code={`{
   "codes": [
-    "ABC12345", "DEF67890", "GHI11223",
-    "JKL44556", "MNO77889", "PQR00112",
-    "STU33445", "VWX66778", "YZA99001",
-    "BCD22334"
+    "AAAA-BBBB", "CCCC-DDDD", "EEEE-FFFF",
+    "GGGG-HHHH", "IIII-JJJJ", "KKKK-LLLL",
+    "MMMM-NNNN", "OOOO-PPPP", "QQQQ-RRRR",
+    "SSSS-TTTT"
   ]
 }`} />
 
-<Callout variant="warning" title="One-time use">
-Each backup code can only be used once. Store them securely. Generating new codes invalidates all previous ones.
+Each code is 8 characters, usable exactly once. Generate new codes to invalidate old ones.
+
+---
+
+## Disable MFA
+
+```
+DELETE /api/mfa/totp
+Authorization: Bearer <token>
+```
+
+<CodeBlock language="bash" code={`curl -X DELETE \\
+  -H "Authorization: Bearer $TOKEN" \\
+  http://localhost:8080/api/mfa/totp`} />
+
+**Response:** `204 No Content`
+
+<Callout variant="warning" title="Admin can disable MFA for locked-out users">
+  If a user loses their authenticator and all backup codes, an admin can call `DELETE /admin/users/{userId}/mfa` to disable MFA and allow password-only login.
 </Callout>

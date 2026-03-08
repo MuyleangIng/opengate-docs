@@ -1,62 +1,132 @@
+import { Callout } from '@/components/docs/Callout';
 import { CodeBlock } from '@/components/docs/CodeBlock';
 
 export const metadata = { title: 'Realms API — OpenGate IAM' };
 
 # Realms API
 
-Base path: `/api/realms`
+Realms are the top-level multi-tenancy boundary. Each realm has its own isolated users, roles, clients, and configuration.
+
+## On this page
+
+- [List Realms](#list-realms)
+- [Create Realm](#create-realm)
+- [Get Realm](#get-realm)
+- [Update Realm](#update-realm)
+- [Delete Realm](#delete-realm)
+
+---
 
 ## List Realms
 
 ```
 GET /api/realms
+Authorization: Bearer <token>
 ```
 
-**Response:** `200 OK`
-<CodeBlock language="json" code={`[
-  {
-    "id": "550e8400-e29b-41d4-a716-446655440000",
-    "name": "master",
-    "displayName": "Master Realm",
-    "enabled": true,
-    "mfaRequired": false,
-    "tokenLifespanSeconds": 300,
-    "refreshTokenLifespanSeconds": 2592000,
-    "createdAt": "2024-01-01T00:00:00Z"
-  }
-]`} />
+<CodeBlock language="bash" code={`curl -H "Authorization: Bearer $TOKEN" \\
+  http://localhost:8080/api/realms`} />
 
-## Get Realm
+**Response:**
 
-```
-GET /api/realms/{realm}
-```
+<CodeBlock language="json" code={`{
+  "content": [
+    {
+      "id": "550e8400-e29b-41d4-a716-446655440000",
+      "name": "master",
+      "displayName": "Master Realm",
+      "mfaRequired": false,
+      "enabled": true,
+      "createdAt": "2025-01-01T00:00:00Z"
+    }
+  ],
+  "totalElements": 1,
+  "totalPages": 1,
+  "page": 0,
+  "size": 20
+}`} />
+
+---
 
 ## Create Realm
 
 ```
 POST /api/realms
+Authorization: Bearer <token>
+Content-Type: application/json
 ```
 
-<CodeBlock language="json" code={`{
-  "name": "corp",
-  "displayName": "Corp Organization",
-  "mfaRequired": true,
-  "tokenLifespanSeconds": 600
-}`} />
+<CodeBlock language="bash" code={`curl -X POST \\
+  -H "Authorization: Bearer $TOKEN" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "name": "acme-corp",
+    "displayName": "ACME Corporation",
+    "tokenLifespanSeconds": 300,
+    "refreshTokenLifespanSeconds": 86400,
+    "mfaRequired": false
+  }' \\
+  http://localhost:8080/api/realms`} />
 
-**Validation:**
-- `name` must match `^[a-z0-9-]+$`
-- `name` must be unique
+**Request body:**
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `name` | `string` | ✅ | Slug — `^[a-z0-9-]+$`, immutable after creation |
+| `displayName` | `string` | — | Human-readable name |
+| `tokenLifespanSeconds` | `integer` | — | Access token TTL (default: 300) |
+| `refreshTokenLifespanSeconds` | `integer` | — | Refresh token TTL (default: 2592000) |
+| `mfaRequired` | `boolean` | — | Enforce MFA for all logins (default: false) |
+
+**Response:** `201 Created` with realm object.
+
+<Callout variant="warning" title="Realm name is immutable">
+  The `name` field is used as a unique key and cannot be changed after creation. Choose carefully.
+</Callout>
+
+---
+
+## Get Realm
+
+```
+GET /api/realms/{realmName}
+Authorization: Bearer <token>
+```
+
+<CodeBlock language="bash" code={`curl -H "Authorization: Bearer $TOKEN" \\
+  http://localhost:8080/api/realms/acme-corp`} />
+
+---
 
 ## Update Realm
 
 ```
-PUT /api/realms/{realm}
+PUT /api/realms/{realmName}
+Authorization: Bearer <token>
+Content-Type: application/json
 ```
+
+<CodeBlock language="bash" code={`curl -X PUT \\
+  -H "Authorization: Bearer $TOKEN" \\
+  -H "Content-Type: application/json" \\
+  -d '{ "displayName": "ACME Corp (Updated)", "mfaRequired": true }' \\
+  http://localhost:8080/api/realms/acme-corp`} />
+
+---
 
 ## Delete Realm
 
 ```
-DELETE /api/realms/{realm}
+DELETE /api/realms/{realmName}
+Authorization: Bearer <token>
 ```
+
+<CodeBlock language="bash" code={`curl -X DELETE \\
+  -H "Authorization: Bearer $TOKEN" \\
+  http://localhost:8080/api/realms/acme-corp`} />
+
+**Response:** `204 No Content`
+
+<Callout variant="danger" title="Deletion is permanent">
+  Deleting a realm permanently removes all users, roles, clients, and sessions within that realm. This action cannot be undone.
+</Callout>

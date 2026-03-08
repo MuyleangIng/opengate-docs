@@ -5,91 +5,149 @@ export const metadata = { title: 'Users API — OpenGate IAM' };
 
 # Users API
 
-Base path: `/api/users`
+Manage users within a realm. All user operations are scoped to a specific realm.
 
-## List Users (Paginated)
+## On this page
 
-```
-GET /api/users?realm=master&search=alice&page=0&size=20
-```
+- [List Users](#list-users)
+- [Create User](#create-user)
+- [Get User](#get-user)
+- [Update User](#update-user)
+- [Delete User](#delete-user)
+- [Reset Password](#reset-password)
+- [Send Email Verification](#send-email-verification)
 
-| Param | Type | Description |
-|-------|------|-------------|
-| `realm` | string | **Required.** Realm name |
-| `search` | string | Optional. Searches username, email, firstName |
-| `page` | int | Page index (0-based, default 0) |
-| `size` | int | Page size (default 20) |
+---
 
-**Response:**
-<CodeBlock language="json" code={`{
-  "content": [
-    {
-      "id": "usr_abc123",
-      "realmName": "master",
-      "username": "alice",
-      "email": "alice@example.com",
-      "firstName": "Alice",
-      "lastName": "Smith",
-      "enabled": true,
-      "emailVerified": false,
-      "createdAt": "2024-01-15T10:00:00Z"
-    }
-  ],
-  "page": 0,
-  "size": 20,
-  "totalElements": 1284,
-  "totalPages": 65
-}`} />
-
-## Get User
+## List Users
 
 ```
-GET /api/users/{id}
+GET /api/users?realm={realm}&page=0&size=20
+Authorization: Bearer <token>
 ```
+
+<CodeBlock language="bash" code={`curl -H "Authorization: Bearer $TOKEN" \\
+  "http://localhost:8080/api/users?realm=master&page=0&size=20"`} />
+
+**Query parameters:**
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `realm` | `string` | ✅ required | Realm name |
+| `page` | `integer` | `0` | Page number (zero-based) |
+| `size` | `integer` | `20` | Page size (max 100) |
+
+---
 
 ## Create User
 
 ```
 POST /api/users
+Authorization: Bearer <token>
+Content-Type: application/json
 ```
 
+<CodeBlock language="bash" code={`curl -X POST \\
+  -H "Authorization: Bearer $TOKEN" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "realmName": "master",
+    "username": "alice",
+    "email": "alice@example.com",
+    "firstName": "Alice",
+    "lastName": "Smith",
+    "password": "SecurePass123!"
+  }' \\
+  http://localhost:8080/api/users`} />
+
+**Request body:**
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `realmName` | `string` | ✅ | Target realm |
+| `username` | `string` | ✅ | Must be unique within realm |
+| `email` | `string` | ✅ | Must be unique within realm |
+| `firstName` | `string` | — | Given name |
+| `lastName` | `string` | — | Family name |
+| `password` | `string` | ✅ | Plain-text — hashed BCrypt(12) server-side |
+
+**Response:** `201 Created`
+
 <CodeBlock language="json" code={`{
+  "id": "usr_abc123",
   "realmName": "master",
   "username": "alice",
   "email": "alice@example.com",
   "firstName": "Alice",
   "lastName": "Smith",
-  "password": "SecurePassword123!"
+  "enabled": true,
+  "emailVerified": false,
+  "createdAt": "2025-06-01T10:00:00Z"
 }`} />
 
-<Callout variant="info" title="Password hashing">
-Passwords are hashed with BCrypt cost factor 12. Plain text is never stored.
-</Callout>
+---
+
+## Get User
+
+```
+GET /api/users/{userId}
+Authorization: Bearer <token>
+```
+
+---
 
 ## Update User
 
 ```
-PUT /api/users/{id}
+PUT /api/users/{userId}
+Authorization: Bearer <token>
+Content-Type: application/json
 ```
+
+<CodeBlock language="bash" code={`curl -X PUT \\
+  -H "Authorization: Bearer $TOKEN" \\
+  -H "Content-Type: application/json" \\
+  -d '{ "firstName": "Alicia", "enabled": true }' \\
+  http://localhost:8080/api/users/usr_abc123`} />
+
+---
 
 ## Delete User
 
 ```
-DELETE /api/users/{id}
+DELETE /api/users/{userId}
+Authorization: Bearer <token>
 ```
+
+**Response:** `204 No Content`
+
+---
 
 ## Reset Password
 
 ```
-POST /api/users/{id}/reset-password
+PUT /api/users/{userId}/password
+Authorization: Bearer <token>
+Content-Type: application/json
 ```
 
-<CodeBlock language="json" code={`{ "newPassword": "NewSecurePassword456!" }`} />
+<CodeBlock language="bash" code={`curl -X PUT \\
+  -H "Authorization: Bearer $TOKEN" \\
+  -H "Content-Type: application/json" \\
+  -d '{ "newPassword": "NewSecurePass456!" }' \\
+  http://localhost:8080/api/users/usr_abc123/password`} />
 
-## Trigger Email Verification
+<Callout variant="info" title="Password hashing">
+  Passwords are always stored as BCrypt hashes with cost factor 12. Plain-text passwords are never persisted.
+</Callout>
+
+---
+
+## Send Email Verification
 
 ```
-POST /api/users/{id}/send-verify-email
+POST /api/users/{userId}/send-verify-email
+Authorization: Bearer <token>
 ```
 
-Publishes a `user.verify.email` event. The notification service will send a verification email using the Thymeleaf `verify-email.html` template.
+Triggers a Kafka event → notification-service sends a verification email using the `verify-email.html` Thymeleaf template.

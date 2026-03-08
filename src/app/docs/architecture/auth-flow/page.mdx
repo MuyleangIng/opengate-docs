@@ -5,45 +5,103 @@ export const metadata = { title: 'Auth Flow — OpenGate IAM' };
 
 # Auth Flow
 
-## Authorization Code + PKCE Flow
+## On this page
 
-This is the recommended flow for all public clients (SPAs, mobile apps).
+- [Authorization Code + PKCE](#authorization-code--pkce)
+- [Client Credentials Flow](#client-credentials-flow)
+- [Token Refresh](#token-refresh)
+- [MFA Flow](#mfa-flow)
+- [JWT Structure](#jwt-structure)
+- [OIDC Discovery](#oidc-discovery)
+
+---
+
+## Authorization Code + PKCE
+
+Recommended flow for all public clients (SPAs, mobile apps).
 
 ```
-1. Client generates code_verifier (random 43-128 chars)
-   code_challenge = BASE64URL(SHA256(code_verifier))
-
-2. GET /realms/master/protocol/openid-connect/auth
-      ?client_id=opengate-console
-      &redirect_uri=http://localhost:3000/callback
-      &response_type=code
-      &code_challenge=<challenge>
-      &code_challenge_method=S256
-      &scope=openid profile email
-
-3. User authenticates (form login)
-
-4. Redirect to: http://localhost:3000/callback?code=<auth_code>
-
-5. POST /realms/master/protocol/openid-connect/token
-   Body: grant_type=authorization_code
-         code=<auth_code>
-         redirect_uri=http://localhost:3000/callback
-         code_verifier=<verifier>
-         client_id=opengate-console
-
-6. Response: { access_token, refresh_token, id_token, expires_in }
+  Browser / SPA                  Gateway              Auth Service
+      │                             │                      │
+      │ 1. Generate code_verifier   │                      │
+      │    code_challenge =         │                      │
+      │    BASE64URL(SHA256(cv))    │                      │
+      │                             │                      │
+      │ 2. GET /auth                │                      │
+      │    ?client_id=...           │                      │
+      │    &response_type=code      │                      │
+      │    &code_challenge=...      │                      │
+      │    &code_challenge_method=  │                      │
+      │      S256                   │──────────────────────►
+      │    &scope=openid profile    │                      │
+      │                             │                      │ 3. Show login page
+      │◄────────────────────────────────────────────────── │
+      │                             │                      │
+      │ 4. User submits credentials │                      │
+      │──────────────────────────────────────────────────► │
+      │                             │                      │ 5. Validate password
+      │                             │                      │    Issue auth_code
+      │ 6. Redirect → callback?code=<auth_code>            │
+      │◄────────────────────────────────────────────────── │
+      │                             │                      │
+      │ 7. POST /token              │                      │
+      │    grant_type=              │                      │
+      │      authorization_code     │                      │
+      │    code=<auth_code>         │                      │
+      │    code_verifier=<cv>       │──────────────────────►
+      │                             │                      │ 8. Verify PKCE
+      │                             │                      │    Issue tokens
+      │ 9. { access_token,          │                      │
+      │      refresh_token,         │◄─────────────────────│
+      │      id_token }             │                      │
+      │◄───────────────────────────  │                      │
 ```
+
+### Step-by-step
+
+<CodeBlock language="bash" code={`# Step 2 — redirect user to auth endpoint
+https://localhost:8080/realms/master/protocol/openid-connect/auth
+  ?client_id=opengate-console
+  &redirect_uri=http://localhost:3000/callback
+  &response_type=code
+  &code_challenge=<BASE64URL_SHA256_of_verifier>
+  &code_challenge_method=S256
+  &scope=openid+profile+email
+
+# Step 7 — exchange code for tokens
+curl -X POST http://localhost:8080/realms/master/protocol/openid-connect/token \\
+  -d "grant_type=authorization_code" \\
+  -d "code=<auth_code>" \\
+  -d "redirect_uri=http://localhost:3000/callback" \\
+  -d "code_verifier=<verifier>" \\
+  -d "client_id=opengate-console"`} />
+
+---
 
 ## Client Credentials Flow
 
 For server-to-server communication (confidential clients):
+
+```
+  Backend Service              Gateway              Auth Service
+      │                           │                      │
+      │ POST /token               │                      │
+      │ grant_type=               │                      │
+      │   client_credentials      │──────────────────────►
+      │ client_id=...             │                      │ Validate client secret
+      │ client_secret=...         │                      │ Issue access_token
+      │                           │◄─────────────────────│
+      │◄──────────────────────────│                      │
+      │ { access_token }          │                      │
+```
 
 <CodeBlock language="bash" code={`curl -X POST http://localhost:8080/realms/master/protocol/openid-connect/token \\
   -H "Content-Type: application/x-www-form-urlencoded" \\
   -d "grant_type=client_credentials" \\
   -d "client_id=my-backend-service" \\
   -d "client_secret=<secret>"`} />
+
+---
 
 ## Token Refresh
 
@@ -52,38 +110,74 @@ For server-to-server communication (confidential clients):
   -d "refresh_token=<refresh_token>" \\
   -d "client_id=opengate-console"`} />
 
-## OIDC Discovery
+| Token | Default TTL | Configurable? |
+|---|---|---|
+| Access token | 5 minutes | Yes — per realm |
+| Refresh token | 30 days | Yes — per realm |
+| ID token | Same as access | No |
 
-<CodeBlock language="bash" code={`curl http://localhost:8080/realms/master/.well-known/openid-configuration`} />
+---
 
-Response includes: `issuer`, `authorization_endpoint`, `token_endpoint`, `jwks_uri`, `userinfo_endpoint`, `scopes_supported`, etc.
+## MFA Flow
+
+When `mfaRequired: true` is set on the realm:
+
+```
+  Client              Auth Service           MFA Service
+    │                      │                     │
+    │ 1. POST credentials  │                     │
+    │─────────────────────►│                     │
+    │                      │ 2. Password valid   │
+    │ 3. { mfa_required:   │                     │
+    │      true,           │                     │
+    │      mfa_token }     │                     │
+    │◄─────────────────────│                     │
+    │                      │                     │
+    │ 4. POST /mfa/totp/   │                     │
+    │    verify            │                     │
+    │    { totp_code,      │─────────────────────►
+    │      mfa_token }     │                     │ 5. Verify TOTP
+    │                      │◄────────────────────│
+    │                      │ 6. Issue full tokens│
+    │◄─────────────────────│                     │
+```
+
+---
 
 ## JWT Structure
 
-Access tokens are RS256-signed JWTs:
+Access tokens are **RS256-signed JWTs**:
 
-<CodeBlock language="json" code={`{
+<CodeBlock language="json" filename="JWT Payload (decoded)" code={`{
   "iss": "http://localhost:8080/realms/master",
   "sub": "usr_abc123",
   "aud": ["opengate-console"],
   "exp": 1705312800,
   "iat": 1705309200,
+  "jti": "550e8400-e29b-41d4-a716-446655440000",
   "realm": "master",
   "email": "alice@example.com",
+  "email_verified": true,
+  "given_name": "Alice",
+  "family_name": "Smith",
   "roles": ["admin", "user"]
 }`} />
 
-<Callout variant="info" title="Token lifespan">
-Default access token lifespan is 300 seconds (5 minutes), configurable per realm. Refresh tokens live for 30 days by default.
-</Callout>
+---
 
-## MFA Flow
+## OIDC Discovery
 
-When MFA is required for a realm:
+<CodeBlock language="bash" code={`curl http://localhost:8080/realms/master/.well-known/openid-configuration`} />
 
-```
-1. User submits password → auth-service validates
-2. Auth server returns mfa_required challenge
-3. Client calls POST /api/mfa/totp/verify or POST /api/mfa/email-otp/verify
-4. On success, auth-server issues full token set
-```
+Key fields in the discovery document:
+
+| Field | Value |
+|---|---|
+| `issuer` | `http://localhost:8080/realms/master` |
+| `authorization_endpoint` | `.../protocol/openid-connect/auth` |
+| `token_endpoint` | `.../protocol/openid-connect/token` |
+| `jwks_uri` | `.../protocol/openid-connect/certs` |
+| `userinfo_endpoint` | `.../protocol/openid-connect/userinfo` |
+| `scopes_supported` | `openid profile email` |
+| `response_types_supported` | `code` |
+| `grant_types_supported` | `authorization_code client_credentials refresh_token` |

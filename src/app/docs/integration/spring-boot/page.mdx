@@ -1,176 +1,160 @@
 import { Callout } from '@/components/docs/Callout';
+import { CodeBlock } from '@/components/docs/CodeBlock';
 
 export const metadata = { title: 'Spring Boot Integration — OpenGate IAM' };
 
 # Spring Boot Integration
 
-Protect a Spring Boot REST API with OpenGate IAM in **3 steps** using `opengate-spring-boot-starter` — the same experience as Keycloak's Spring adapter.
+## On this page
 
-<Callout variant="success" title="Working example">
-The complete sample API runs at **http://localhost:8090**. Source: `opengate-sample-app/`.
-</Callout>
-
----
-
-## Step 1 — Add the starter
-
-In your `build.gradle.kts`:
-
-```kotlin
-dependencies {
-  implementation(project(":opengate-spring-boot-starter"))
-
-  // or from Maven (when published):
-  // implementation("io.opengate:opengate-spring-boot-starter:1.0.0")
-}
-```
+- [OAuth2 Resource Server](#oauth2-resource-server)
+- [Client Credentials](#client-credentials)
+- [Role-Based Authorization](#role-based-authorization)
+- [WebClient with OAuth2](#webclient-with-oauth2)
 
 ---
 
-## Step 2 — Configure `application.yml`
+## OAuth2 Resource Server
 
-```yaml
-opengate:
-  server-url: http://localhost:9080     # OpenGate gateway
-  realm: master
-  resource: my-app                       # your client ID
-  public-paths:
-    - /api/public/**
-    - /actuator/health
+Protect your Spring Boot API by validating JWTs issued by OpenGate.
 
-spring:
+**Dependencies:**
+
+<CodeBlock language="kotlin" filename="build.gradle.kts" code={`dependencies {
+    implementation("org.springframework.boot:spring-boot-starter-security")
+    implementation("org.springframework.boot:spring-boot-starter-oauth2-resource-server")
+}`} />
+
+**Configuration:**
+
+<CodeBlock language="yaml" filename="application.yml" code={`spring:
   security:
     oauth2:
       resourceserver:
         jwt:
-          jwk-set-uri: http://localhost:9081/oauth2/jwks
-          issuer-uri: http://localhost:9080/realms/master
-```
+          jwk-set-uri: http://localhost:8080/realms/master/protocol/openid-connect/certs`} />
 
-That's it — the starter auto-configures a stateless JWT resource server.
+**Security Config:**
+
+<CodeBlock language="java" filename="SecurityConfig.java" code={`@Configuration
+@EnableWebSecurity
+@EnableMethodSecurity
+public class SecurityConfig {
+
+  @Bean
+  public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
+    return http
+      .csrf(csrf -> csrf.disable())
+      .sessionManagement(s -> s.sessionCreationPolicy(STATELESS))
+      .authorizeHttpRequests(auth -> auth
+        .requestMatchers("/actuator/health").permitAll()
+        .anyRequest().authenticated()
+      )
+      .oauth2ResourceServer(oauth2 -> oauth2
+        .jwt(jwt -> jwt.jwtAuthenticationConverter(jwtAuthConverter()))
+      )
+      .build();
+  }
+
+  @Bean
+  public JwtAuthenticationConverter jwtAuthConverter() {
+    var rolesConverter = new JwtGrantedAuthoritiesConverter();
+    rolesConverter.setAuthoritiesClaimName("roles");   // OpenGate uses "roles" claim
+    rolesConverter.setAuthorityPrefix("ROLE_");
+
+    var converter = new JwtAuthenticationConverter();
+    converter.setJwtGrantedAuthoritiesConverter(rolesConverter);
+    return converter;
+  }
+}`} />
+
+<Callout variant="info" title="roles claim">
+  OpenGate embeds roles in the `roles` JWT claim (not `scope` or `realm_access`). The `JwtAuthenticationConverter` above maps them to Spring Security `GrantedAuthority` objects.
+</Callout>
 
 ---
 
-## Step 3 — Secure your controllers
+## Client Credentials
 
-```java
-@RestController
+For service-to-service calls, use the client credentials grant:
+
+<CodeBlock language="yaml" filename="application.yml" code={`spring:
+  security:
+    oauth2:
+      client:
+        registration:
+          opengate:
+            client-id: my-backend-service
+            client-secret: \${OPENGATE_CLIENT_SECRET}
+            authorization-grant-type: client_credentials
+            scope: openid
+        provider:
+          opengate:
+            token-uri: http://localhost:8080/realms/master/protocol/openid-connect/token`} />
+
+---
+
+## Role-Based Authorization
+
+<CodeBlock language="java" filename="ProductController.java" code={`@RestController
 @RequestMapping("/api/products")
 public class ProductController {
 
-    // Any authenticated user
-    @GetMapping
-    @PreAuthorize("isAuthenticated()")
-    public List<Product> list() {
-        return productService.findAll();
-    }
+  @GetMapping
+  @PreAuthorize("hasRole('VIEWER')")        // ROLE_VIEWER in JWT
+  public Page<Product> list(Pageable pageable) { ... }
 
-    // Admin only
-    @PostMapping
-    @PreAuthorize("hasRole('ADMIN')")
-    public Product create(@RequestBody Product p) {
-        return productService.save(p);
-    }
+  @PostMapping
+  @PreAuthorize("hasRole('EDITOR')")
+  public Product create(@Valid @RequestBody ProductDto dto) { ... }
 
-    // Admin only
-    @DeleteMapping("/{id}")
-    @PreAuthorize("hasRole('ADMIN')")
-    public void delete(@PathVariable String id) {
-        productService.delete(id);
-    }
-}
-```
+  @DeleteMapping("/{id}")
+  @PreAuthorize("hasRole('ADMIN')")
+  public void delete(@PathVariable UUID id) { ... }
 
----
-
-## Get the current user
-
-Inject `OpenGateUser` anywhere in your controller:
-
-```java
-import io.opengate.starter.user.OpenGateUser;
-import org.springframework.security.core.annotation.AuthenticationPrincipal;
-import org.springframework.security.oauth2.jwt.Jwt;
-
-@GetMapping("/api/me")
-public Map<String, Object> me(@AuthenticationPrincipal Jwt jwt) {
-    OpenGateUser user = OpenGateUser.from(jwt);
-
-    return Map.of(
-        "userId",   user.getUserId(),
-        "username", user.getUsername(),
-        "email",    user.getEmail(),
-        "roles",    user.getRoles(),
-        "realm",    user.getRealm(),
-        "isAdmin",  user.hasRole("admin")
+  // Access JWT claims directly
+  @GetMapping("/me")
+  public UserInfo me(@AuthenticationPrincipal Jwt jwt) {
+    return new UserInfo(
+      jwt.getSubject(),
+      jwt.getClaimAsString("email"),
+      jwt.getClaimAsStringList("roles")
     );
+  }
+}`} />
+
+---
+
+## WebClient with OAuth2
+
+Make outbound calls to OpenGate-protected APIs using reactive WebClient with automatic token injection:
+
+<CodeBlock language="java" filename="OpenGateWebClient.java" code={`@Configuration
+public class WebClientConfig {
+
+  @Bean
+  public WebClient openGateWebClient(
+      ReactiveOAuth2AuthorizedClientManager manager) {
+
+    var filter = new ServerOAuth2AuthorizedClientExchangeFilterFunction(manager);
+    filter.setDefaultClientRegistrationId("opengate");
+
+    return WebClient.builder()
+      .baseUrl("http://localhost:8080")
+      .filter(filter)
+      .build();
+  }
 }
-```
 
----
+// Usage
+@Service
+public class UserApiClient {
+  private final WebClient client;
 
-## Test with curl
-
-```bash
-# 1. Get a token (client credentials — server-to-server)
-TOKEN=$(curl -s -X POST http://localhost:9081/oauth2/token \
-  -H "Content-Type: application/x-www-form-urlencoded" \
-  -H "Authorization: Basic $(echo -n 'sample-app:sample-secret' | base64)" \
-  -d "grant_type=client_credentials&scope=openid profile" \
-  | jq -r '.access_token')
-
-echo "Token: ${TOKEN:0:50}..."
-
-# 2. Public endpoint — no token needed
-curl http://localhost:8090/api/public/status
-
-# 3. Protected endpoint — with token
-curl -H "Authorization: Bearer $TOKEN" \
-     http://localhost:8090/api/products
-
-# 4. Your profile
-curl -H "Authorization: Bearer $TOKEN" \
-     http://localhost:8090/api/me
-
-# 5. Admin endpoint
-curl -H "Authorization: Bearer $TOKEN" \
-     http://localhost:8090/api/admin/dashboard
-
-# 6. No token → 401
-curl http://localhost:8090/api/products
-```
-
----
-
-## Role extraction
-
-The starter extracts roles from all three locations automatically:
-
-```
-JWT claim          → Spring authority
-─────────────────────────────────────
-roles["admin"]     → ROLE_ADMIN
-realm_access.roles → ROLE_ADMIN
-resource_access    → ROLE_ADMIN
-```
-
-This means `@PreAuthorize("hasRole('ADMIN')")` works regardless of which format OpenGate uses — and it's fully **Keycloak-compatible** out of the box.
-
----
-
-## How it wires together
-
-```
-opengate-sample-frontend (3003)
-  │  Authorization Code + PKCE
-  ▼
-opengate-auth-service (9081)  ──issues JWT──▶  stored in browser localStorage
-                                                │
-opengate-sample-frontend                        │  Bearer token
-  │  GET /api/products                          │
-  ▼                                             ▼
-opengate-sample-app (8090)  ◀── validates JWT via /oauth2/jwks
-  │  @PreAuthorize("isAuthenticated()")
-  ▼
-200 OK — product list returned
-```
+  public Mono<UserResponse> getUser(String userId) {
+    return client.get()
+      .uri("/api/users/{id}", userId)
+      .retrieve()
+      .bodyToMono(UserResponse.class);
+  }
+}`} />
