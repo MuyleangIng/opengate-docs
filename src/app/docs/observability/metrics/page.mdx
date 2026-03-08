@@ -1,0 +1,130 @@
+export const metadata = { title: 'Metrics (Prometheus)' };
+
+# Metrics
+
+OpenGate IAM exposes **Prometheus-compatible metrics** via Spring Boot Actuator on every service. Scrape them with Prometheus and visualize in Grafana.
+
+## Metrics Endpoint
+
+```bash
+GET http://localhost:{port}/actuator/prometheus
+```
+
+Available on all services: `:9080` through `:9089`.
+
+## Key Metrics
+
+### Authentication Metrics
+
+| Metric | Type | Description |
+|---|---|---|
+| `opengate_auth_logins_total` | Counter | Total login attempts |
+| `opengate_auth_logins_success_total` | Counter | Successful logins |
+| `opengate_auth_logins_failed_total` | Counter | Failed login attempts |
+| `opengate_auth_token_issued_total` | Counter | Tokens issued |
+| `opengate_auth_token_revoked_total` | Counter | Tokens revoked |
+| `opengate_mfa_challenges_total` | Counter | MFA challenges issued |
+
+### Session Metrics
+
+| Metric | Type | Description |
+|---|---|---|
+| `opengate_sessions_active` | Gauge | Current active sessions |
+| `opengate_sessions_created_total` | Counter | Sessions created |
+| `opengate_sessions_expired_total` | Counter | Sessions expired |
+
+### JVM & HTTP Metrics (auto-exposed)
+
+```
+# JVM
+jvm_memory_used_bytes
+jvm_threads_live_threads
+jvm_gc_pause_seconds
+
+# HTTP requests
+http_server_requests_seconds_count
+http_server_requests_seconds_sum
+http_server_requests_seconds_max
+```
+
+## Prometheus Scrape Config
+
+```yaml
+# prometheus.yml
+scrape_configs:
+  - job_name: 'opengate-gateway'
+    static_configs:
+      - targets: ['localhost:9080']
+    metrics_path: /actuator/prometheus
+
+  - job_name: 'opengate-auth'
+    static_configs:
+      - targets: ['localhost:9081']
+    metrics_path: /actuator/prometheus
+
+  - job_name: 'opengate-users'
+    static_configs:
+      - targets: ['localhost:9082']
+    metrics_path: /actuator/prometheus
+
+  - job_name: 'opengate-admin'
+    static_configs:
+      - targets: ['localhost:9089']
+    metrics_path: /actuator/prometheus
+```
+
+## Enable Prometheus in application.yml
+
+```yaml
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,prometheus,metrics,info
+  metrics:
+    export:
+      prometheus:
+        enabled: true
+    tags:
+      application: ${spring.application.name}
+      realm: master
+```
+
+## Docker Compose — Add Prometheus + Grafana
+
+```yaml
+services:
+  prometheus:
+    image: prom/prometheus:v2.51.0
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+    ports:
+      - "9090:9090"
+
+  grafana:
+    image: grafana/grafana:10.4.0
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    depends_on:
+      - prometheus
+```
+
+## Useful PromQL Queries
+
+```promql
+# Login success rate (last 5 min)
+rate(opengate_auth_logins_success_total[5m])
+
+# Failed logins per second
+rate(opengate_auth_logins_failed_total[1m])
+
+# Active sessions gauge
+opengate_sessions_active
+
+# p99 HTTP response time for auth service
+histogram_quantile(0.99,
+  rate(http_server_requests_seconds_bucket{job="opengate-auth"}[5m])
+)
+```

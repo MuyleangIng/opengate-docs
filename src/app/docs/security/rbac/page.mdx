@@ -1,0 +1,133 @@
+export const metadata = { title: 'RBAC & Roles' };
+
+# RBAC & Roles
+
+OpenGate IAM implements **Role-Based Access Control (RBAC)** via the **`opengate-rbac-service`** (`:9084`). Roles are scoped per realm and are embedded in JWT access tokens.
+
+## Concepts
+
+| Concept | Description |
+|---|---|
+| **Role** | A named permission (e.g. `ROLE_ADMIN`, `ROLE_USER`) |
+| **Composite Role** | A role that inherits permissions from other roles |
+| **Group** | A collection of users that share roles |
+| **Realm Role** | A role defined at the realm level, available to all clients |
+| **Client Role** | A role scoped to a specific OAuth2 client |
+
+## Creating a Role
+
+```bash
+POST /admin/realms/master/roles
+Authorization: Bearer <admin_token>
+Content-Type: application/json
+
+{
+  "name": "ROLE_EDITOR",
+  "description": "Can create and edit content",
+  "composite": false
+}
+```
+
+## Composite Roles
+
+A composite role automatically grants all roles it contains.
+
+```bash
+# Create composite role
+POST /admin/realms/master/roles
+{
+  "name": "ROLE_MANAGER",
+  "description": "Manager — inherits editor + viewer",
+  "composite": true,
+  "compositeRoles": ["ROLE_EDITOR", "ROLE_VIEWER"]
+}
+```
+
+## Assigning Roles to Users
+
+```bash
+POST /admin/realms/master/users/{userId}/roles
+Authorization: Bearer <admin_token>
+Content-Type: application/json
+
+{
+  "roles": ["ROLE_EDITOR", "ROLE_VIEWER"]
+}
+```
+
+## Roles in JWT Tokens
+
+Roles are automatically included in the `roles` claim of every access token:
+
+```json
+{
+  "sub": "user-uuid",
+  "realm": "master",
+  "roles": ["ROLE_USER", "ROLE_EDITOR"],
+  "scope": "openid profile"
+}
+```
+
+## Enforcing Roles in Spring Boot
+
+```java
+@RestController
+@RequestMapping("/api/content")
+public class ContentController {
+
+  @GetMapping
+  @PreAuthorize("hasRole('ROLE_VIEWER')")
+  public List<Content> list() { ... }
+
+  @PostMapping
+  @PreAuthorize("hasRole('ROLE_EDITOR')")
+  public Content create(@RequestBody ContentDto dto) { ... }
+
+  @DeleteMapping("/{id}")
+  @PreAuthorize("hasRole('ROLE_ADMIN')")
+  public void delete(@PathVariable String id) { ... }
+}
+```
+
+Enable method security:
+
+```java
+@Configuration
+@EnableMethodSecurity
+public class SecurityConfig { }
+```
+
+## Groups
+
+Groups let you assign roles to many users at once.
+
+```bash
+# Create a group
+POST /admin/realms/master/groups
+{
+  "name": "editors-team",
+  "roles": ["ROLE_EDITOR"]
+}
+
+# Add user to group
+POST /admin/realms/master/groups/{groupId}/members
+{
+  "userId": "user-uuid"
+}
+```
+
+All users in `editors-team` automatically inherit `ROLE_EDITOR`.
+
+## Listing Roles
+
+```bash
+GET /admin/realms/master/roles
+Authorization: Bearer <admin_token>
+
+# Response
+[
+  { "id": "uuid", "name": "ROLE_ADMIN", "composite": false },
+  { "id": "uuid", "name": "ROLE_USER",  "composite": false },
+  { "id": "uuid", "name": "ROLE_MANAGER", "composite": true }
+]
+```

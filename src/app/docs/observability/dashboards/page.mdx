@@ -1,0 +1,128 @@
+export const metadata = { title: 'Grafana Dashboards' };
+
+# Grafana Dashboards
+
+OpenGate IAM ships pre-built **Grafana dashboards** for monitoring authentication events, session activity, JVM health, and HTTP performance across all services.
+
+## Included Dashboards
+
+| Dashboard | Description |
+|---|---|
+| **OpenGate Overview** | Total logins, active sessions, token issuance rate |
+| **Auth Service** | Login success/failure rate, token latency, PKCE usage |
+| **User Service** | User CRUD operations, password reset activity |
+| **Session Monitor** | Active sessions per realm, session revocations |
+| **JVM Health** | Heap memory, GC pauses, thread count per service |
+| **HTTP Performance** | Request rate, error rate, p50/p95/p99 latency |
+
+## Quick Setup
+
+```bash
+# Start Prometheus + Grafana with Docker Compose
+docker compose -f docker-compose.monitoring.yml up -d
+
+# Open Grafana
+open http://localhost:3000
+# Default login: admin / admin
+```
+
+## docker-compose.monitoring.yml
+
+```yaml
+version: '3.8'
+services:
+  prometheus:
+    image: prom/prometheus:v2.51.0
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    ports:
+      - "9090:9090"
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.retention.time=15d'
+
+  grafana:
+    image: grafana/grafana:10.4.0
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/dashboards:/etc/grafana/provisioning/dashboards
+      - ./monitoring/datasources:/etc/grafana/provisioning/datasources
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+    depends_on:
+      - prometheus
+
+volumes:
+  prometheus_data:
+  grafana_data:
+```
+
+## Grafana Data Source Config
+
+```yaml
+# monitoring/datasources/prometheus.yml
+apiVersion: 1
+datasources:
+  - name: Prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+
+  - name: Loki
+    type: loki
+    access: proxy
+    url: http://loki:3100
+```
+
+## Key Panels — OpenGate Overview Dashboard
+
+```
+┌──────────────────┬──────────────────┬──────────────────┐
+│  Logins / min    │  Active Sessions  │  Tokens Issued   │
+│     124          │      847          │    1,293 / hr    │
+├──────────────────┴──────────────────┴──────────────────┤
+│  Login Success Rate                                     │
+│  ████████████████████████████░░░░  94.2%               │
+├────────────────────────────────────────────────────────┤
+│  HTTP p99 Latency by Service (ms)                       │
+│  auth-service:  45ms                                    │
+│  user-service:  12ms                                    │
+│  rbac-service:   8ms                                    │
+└────────────────────────────────────────────────────────┘
+```
+
+## Import Dashboards Manually
+
+1. Go to `Grafana → Dashboards → Import`
+2. Upload JSON files from `monitoring/dashboards/` in the repo
+3. Select the **Prometheus** data source
+4. Click **Import**
+
+## Alerts
+
+```yaml
+# monitoring/alerts/opengate.yml
+groups:
+  - name: opengate
+    rules:
+      - alert: HighLoginFailureRate
+        expr: rate(opengate_auth_logins_failed_total[5m]) > 10
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High login failure rate detected"
+
+      - alert: ServiceDown
+        expr: up{job=~"opengate-.*"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "OpenGate service {{ $labels.job }} is down"
+```

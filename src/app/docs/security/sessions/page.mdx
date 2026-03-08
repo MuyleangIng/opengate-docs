@@ -1,0 +1,112 @@
+export const metadata = { title: 'Session Management' };
+
+# Session Management
+
+OpenGate IAM manages user sessions via the **`opengate-session-service`** (`:9087`) backed by **Redis 7**. Sessions track active logins, device info, and support revocation.
+
+## How Sessions Work
+
+```
+User logs in (OAuth2 authorization_code flow)
+  → Auth service issues access_token + refresh_token
+  → Session record created in Redis
+  → Session ID embedded in token claims
+  → Session tracks: userId, realm, device, IP, created_at, last_active
+```
+
+## Session Lifetime
+
+| Token | Default TTL | Configurable |
+|---|---|---|
+| Access Token | 5 minutes | `access-token-time-to-live` |
+| Refresh Token | 30 days | `refresh-token-time-to-live` |
+| Session (Redis) | 30 days | `session-idle-timeout` |
+
+## Listing Active Sessions
+
+```bash
+# Get all sessions for a user
+GET /admin/realms/master/users/{userId}/sessions
+Authorization: Bearer <admin_token>
+
+# Response
+[
+  {
+    "sessionId": "sess-uuid",
+    "userId": "user-uuid",
+    "realm": "master",
+    "ipAddress": "192.168.1.10",
+    "userAgent": "Mozilla/5.0 ...",
+    "createdAt": "2026-03-01T10:00:00Z",
+    "lastActiveAt": "2026-03-08T14:30:00Z",
+    "clients": ["sample-app"]
+  }
+]
+```
+
+## Revoking a Session
+
+```bash
+# Revoke a specific session (logs out that device)
+DELETE /admin/realms/master/sessions/{sessionId}
+Authorization: Bearer <admin_token>
+```
+
+## Revoking All Sessions for a User
+
+```bash
+# Force logout all devices
+DELETE /admin/realms/master/users/{userId}/sessions
+Authorization: Bearer <admin_token>
+```
+
+## Token Refresh
+
+```bash
+POST http://localhost:9081/oauth2/token
+Content-Type: application/x-www-form-urlencoded
+
+grant_type=refresh_token
+&refresh_token=<refresh_token>
+&client_id=sample-app
+```
+
+> If the session has been revoked, refresh token requests will return `401 invalid_grant`.
+
+## Token Revocation
+
+```bash
+# Revoke an access or refresh token
+POST http://localhost:9081/oauth2/revoke
+Content-Type: application/x-www-form-urlencoded
+
+token=<token>
+&client_id=sample-app
+```
+
+## Session Configuration
+
+```yaml
+# opengate-session-service application.yml
+session:
+  access-token-time-to-live: 300        # 5 minutes
+  refresh-token-time-to-live: 2592000   # 30 days
+  session-idle-timeout: 1800            # 30 minutes idle
+  max-sessions-per-user: 5              # concurrent device limit
+
+spring:
+  data:
+    redis:
+      host: localhost
+      port: 6379
+```
+
+## Single Sign-On (SSO)
+
+OpenGate IAM supports SSO across multiple clients within the same realm. Once a user authenticates with one app, subsequent authorization requests to other apps in the same realm will auto-authenticate without re-entering credentials.
+
+To force re-authentication, use `prompt=login`:
+
+```
+GET /oauth2/authorize?...&prompt=login
+```

@@ -1,0 +1,119 @@
+export const metadata = { title: 'Health Checks' };
+
+# Health Checks
+
+All OpenGate IAM microservices expose health check endpoints via **Spring Boot Actuator**. Use these for load balancers, Kubernetes liveness/readiness probes, and uptime monitoring.
+
+## Endpoints
+
+Every service exposes:
+
+| Endpoint | Description |
+|---|---|
+| `GET /actuator/health` | Aggregated health status |
+| `GET /actuator/health/liveness` | Kubernetes liveness probe |
+| `GET /actuator/health/readiness` | Kubernetes readiness probe |
+| `GET /actuator/info` | Application version and metadata |
+
+## Example Response
+
+```bash
+GET http://localhost:9081/actuator/health
+
+{
+  "status": "UP",
+  "components": {
+    "db": { "status": "UP", "details": { "database": "PostgreSQL", "validationQuery": "isValid()" } },
+    "redis": { "status": "UP" },
+    "kafka": { "status": "UP" },
+    "diskSpace": { "status": "UP" }
+  }
+}
+```
+
+## Check All Services
+
+```bash
+# Gateway
+curl http://localhost:9080/actuator/health
+
+# Auth Service
+curl http://localhost:9081/actuator/health
+
+# User Service
+curl http://localhost:9082/actuator/health
+
+# Realm Service
+curl http://localhost:9083/actuator/health
+
+# RBAC Service
+curl http://localhost:9084/actuator/health
+
+# Client Service
+curl http://localhost:9085/actuator/health
+
+# MFA Service
+curl http://localhost:9086/actuator/health
+
+# Session Service
+curl http://localhost:9087/actuator/health
+
+# Admin API
+curl http://localhost:9089/actuator/health
+```
+
+## Kubernetes Probes
+
+```yaml
+# In your Kubernetes Deployment
+livenessProbe:
+  httpGet:
+    path: /actuator/health/liveness
+    port: 8080
+  initialDelaySeconds: 30
+  periodSeconds: 10
+  failureThreshold: 3
+
+readinessProbe:
+  httpGet:
+    path: /actuator/health/readiness
+    port: 8080
+  initialDelaySeconds: 20
+  periodSeconds: 5
+  failureThreshold: 3
+```
+
+## Actuator Configuration
+
+```yaml
+# application.yml
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      show-details: always
+      probes:
+        enabled: true
+  health:
+    livenessState:
+      enabled: true
+    readinessState:
+      enabled: true
+```
+
+## Docker Compose Health Check
+
+```yaml
+services:
+  opengate-auth-service:
+    image: opengate/auth-service:1.0.0
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/actuator/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+```

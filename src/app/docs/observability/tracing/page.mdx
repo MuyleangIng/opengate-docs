@@ -1,0 +1,123 @@
+export const metadata = { title: 'Distributed Tracing (OTLP)' };
+
+# Distributed Tracing (OTLP)
+
+OpenGate IAM supports **distributed tracing** via **OpenTelemetry (OTLP)**. Traces flow across all 11 microservices and can be exported to Jaeger, Tempo, or any OTLP-compatible backend.
+
+## How It Works
+
+Every HTTP request gets a `traceId` that propagates through all downstream service calls using the **W3C TraceContext** standard:
+
+```
+Browser → Gateway (9080) → Auth Service (9081) → User Service (9082)
+                                ↓
+                         [trace spans collected]
+                                ↓
+                         OTLP Exporter → Jaeger / Tempo
+```
+
+## Dependencies
+
+```xml
+<!-- pom.xml (all services) -->
+<dependency>
+  <groupId>io.micrometer</groupId>
+  <artifactId>micrometer-tracing-bridge-otel</artifactId>
+</dependency>
+<dependency>
+  <groupId>io.opentelemetry</groupId>
+  <artifactId>opentelemetry-exporter-otlp</artifactId>
+</dependency>
+```
+
+## Configuration
+
+```yaml
+# application.yml
+management:
+  tracing:
+    sampling:
+      probability: 1.0   # 1.0 = 100% (use 0.1 in production)
+
+spring:
+  application:
+    name: opengate-auth-service
+
+otel:
+  exporter:
+    otlp:
+      endpoint: http://localhost:4318   # OTLP HTTP endpoint
+  resource:
+    attributes:
+      service.name: ${spring.application.name}
+      deployment.environment: production
+```
+
+## Run Jaeger (All-in-One)
+
+```bash
+docker run -d --name jaeger \
+  -p 16686:16686 \
+  -p 4317:4317 \
+  -p 4318:4318 \
+  jaegertracing/all-in-one:latest
+
+# Open Jaeger UI
+open http://localhost:16686
+```
+
+## Docker Compose — Add Jaeger
+
+```yaml
+services:
+  jaeger:
+    image: jaegertracing/all-in-one:1.57
+    ports:
+      - "16686:16686"   # Jaeger UI
+      - "4317:4317"     # OTLP gRPC
+      - "4318:4318"     # OTLP HTTP
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+```
+
+## Trace Context Propagation
+
+OpenGate propagates trace context via HTTP headers:
+
+```
+traceparent: 00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01
+tracestate: opengate=xxx
+```
+
+All service-to-service calls (via RestTemplate or WebClient) automatically forward these headers.
+
+## Grafana Tempo (Alternative to Jaeger)
+
+```yaml
+# docker-compose.yml
+services:
+  tempo:
+    image: grafana/tempo:2.4.0
+    command: -config.file=/etc/tempo.yaml
+    volumes:
+      - ./monitoring/tempo.yaml:/etc/tempo.yaml
+    ports:
+      - "4317:4317"
+      - "4318:4318"
+      - "3200:3200"   # Tempo query API for Grafana
+```
+
+Then configure a Tempo data source in Grafana at `http://tempo:3200`.
+
+## Sample Trace Output
+
+```
+Trace ID: 4bf92f3577b34da6a3ce929d0e0e4736
+
+Spans:
+  [opengate-gateway]      POST /oauth2/token           12ms
+  [opengate-auth-service]   ├─ validateClient()         2ms
+  [opengate-auth-service]   ├─ authenticateUser()       5ms
+  [opengate-user-service]   │   └─ findByUsername()     3ms
+  [opengate-auth-service]   └─ issueTokens()            3ms
+```
