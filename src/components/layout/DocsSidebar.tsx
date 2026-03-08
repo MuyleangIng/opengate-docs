@@ -1,6 +1,7 @@
 'use client';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
+import { Heart, Github, MessageCircle } from 'lucide-react';
 
 const nav = [
   {
@@ -29,30 +30,30 @@ const nav = [
   {
     section: 'Architecture',
     items: [
-      { label: 'Overview', href: '/docs/architecture' },
+      { label: 'Overview',      href: '/docs/architecture' },
       { label: 'Microservices', href: '/docs/architecture/microservices' },
-      { label: 'Auth Flow', href: '/docs/architecture/auth-flow' },
-      { label: 'Data Model', href: '/docs/architecture/data-model' },
+      { label: 'Auth Flow',     href: '/docs/architecture/auth-flow' },
+      { label: 'Data Model',    href: '/docs/architecture/data-model' },
     ],
   },
   {
     section: 'API Reference',
     items: [
       { label: 'Authentication', href: '/docs/api' },
-      { label: 'Realms', href: '/docs/api/realms' },
-      { label: 'Users', href: '/docs/api/users' },
-      { label: 'Roles & RBAC', href: '/docs/api/roles' },
-      { label: 'OAuth Clients', href: '/docs/api/clients' },
-      { label: 'Sessions', href: '/docs/api/sessions' },
-      { label: 'MFA', href: '/docs/api/mfa' },
+      { label: 'Realms',         href: '/docs/api/realms' },
+      { label: 'Users',          href: '/docs/api/users' },
+      { label: 'Roles & RBAC',   href: '/docs/api/roles' },
+      { label: 'OAuth Clients',  href: '/docs/api/clients' },
+      { label: 'Sessions',       href: '/docs/api/sessions' },
+      { label: 'MFA',            href: '/docs/api/mfa' },
     ],
   },
   {
     section: 'Integration',
     items: [
-      { label: 'Overview',            href: '/docs/integration' },
-      { label: 'React / Next.js',     href: '/docs/integration/react' },
-      { label: 'Spring Boot',         href: '/docs/integration/spring-boot' },
+      { label: 'Overview',        href: '/docs/integration' },
+      { label: 'React / Next.js', href: '/docs/integration/react' },
+      { label: 'Spring Boot',     href: '/docs/integration/spring-boot' },
     ],
   },
   {
@@ -68,17 +69,17 @@ const nav = [
   {
     section: 'Security',
     items: [
-      { label: 'OAuth 2.1 / OIDC',   href: '/docs/security/oauth2' },
-      { label: 'MFA',                 href: '/docs/security/mfa' },
-      { label: 'RBAC & Roles',        href: '/docs/security/rbac' },
-      { label: 'Sessions',            href: '/docs/security/sessions' },
+      { label: 'OAuth 2.1 / OIDC', href: '/docs/security/oauth2' },
+      { label: 'MFA',              href: '/docs/security/mfa' },
+      { label: 'RBAC & Roles',     href: '/docs/security/rbac' },
+      { label: 'Sessions',         href: '/docs/security/sessions' },
     ],
   },
   {
     section: 'Deployment',
     items: [
-      { label: 'Docker Compose', href: '/docs/deployment' },
-      { label: 'Kubernetes', href: '/docs/deployment/kubernetes' },
+      { label: 'Docker Compose',       href: '/docs/deployment' },
+      { label: 'Kubernetes',           href: '/docs/deployment/kubernetes' },
       { label: 'Production Checklist', href: '/docs/deployment/production' },
     ],
   },
@@ -86,11 +87,10 @@ const nav = [
 
 export function DocsSidebar() {
   const pathname = usePathname();
+
   return (
-    <aside
-      className="fixed left-0 top-14 bottom-0 w-[260px] overflow-y-auto hidden lg:block border-r border-gray-200 bg-white"
-    >
-      <nav className="px-4 py-6 space-y-6">
+    <aside className="fixed left-0 top-14 bottom-0 w-[260px] overflow-y-auto hidden lg:flex flex-col border-r border-gray-200 bg-white">
+      <nav className="flex-1 px-4 py-6 space-y-6">
         {nav.map(group => (
           <div key={group.section}>
             <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider px-2 mb-2">
@@ -118,6 +118,40 @@ export function DocsSidebar() {
           </div>
         ))}
       </nav>
+
+      {/* Sponsor + Community */}
+      <div className="px-4 pb-6 pt-4 border-t border-gray-100 space-y-3">
+        <a
+          href="https://github.com/sponsors/MuyleangIng"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="flex items-center gap-2 w-full px-3 py-2.5 rounded-xl text-xs font-medium text-rose-600 bg-rose-50 border border-rose-100 hover:bg-rose-100 transition-colors"
+        >
+          <Heart size={13} className="fill-rose-500 text-rose-500 flex-shrink-0" />
+          Sponsor this project
+        </a>
+        <div className="flex gap-2">
+          <a
+            href="https://github.com/MuyleangIng/opengate-iam/issues"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex-1 flex items-center justify-center gap-1.5 px-2 py-2 rounded-lg text-xs text-gray-600 bg-gray-50 border border-gray-200 hover:bg-gray-100 transition-colors"
+          >
+            <Github size={12} /> Issues
+          </a>
+          <a
+            href="https://github.com/MuyleangIng/opengate-iam/discussions"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex-1 flex items-center justify-center gap-1.5 px-2 py-2 rounded-lg text-xs text-gray-600 bg-gray-50 border border-gray-200 hover:bg-gray-100 transition-colors"
+          >
+            <MessageCircle size={12} /> Discuss
+          </a>
+        </div>
+        <p className="text-[10px] text-gray-400 text-center leading-relaxed">
+          MIT License · v1.0.0
+        </p>
+      </div>
     </aside>
   );
 }
